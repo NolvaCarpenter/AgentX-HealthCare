@@ -1,0 +1,13 @@
+# Github's default gitignore for Python
+
+# Environments
+.env
+.venv
+venv/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
