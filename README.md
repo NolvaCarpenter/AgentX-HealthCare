@@ -4,7 +4,7 @@ This project implements a conversational AI agent that conducts interactive symp
 
 ## Participation in AgentX Challenge and Berkeley MOOC
 
-This project is part of our submission to the AgentX Challenge, hosted by the Berkeley Advanced Agentic AI MOOC. 
+This project is part of our submission to the [AgentX Challenge]([url](https://rdi.berkeley.edu/agentx/)), hosted by the [Berkeley Advanced Agentic AI MOOC]([url](https://llmagents-learning.org/sp25)). 
 
 
 ## Architecture
