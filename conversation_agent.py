@@ -7,9 +7,10 @@ from typing import Dict, List, Any, TypedDict, Optional, Tuple, Literal
 import json
 from datetime import datetime
 
-from symptom_state import SymptomState, SymptomDetail, Severity, Duration
-from symptom_extraction import SymptomExtractor, SymptomDetailExtractor
+from symptoms.symptom_state import SymptomState, SymptomDetail, Severity, Duration
+from symptoms.symptom_extraction import SymptomExtractor, SymptomDetailExtractor
 from IPython.display import Image, display
+
 
 # Define the state schema for the conversation graph
 class ConversationState(TypedDict):
@@ -22,12 +23,14 @@ class ConversationState(TypedDict):
     extracted_details: Dict[str, Any]
     missing_field: Optional[str]
 
+
 # Initialize the language model
 llm = ChatOpenAI(model_name="gpt-4o")
 
 # Initialize extractors
 symptom_extractor = SymptomExtractor()
 detail_extractor = SymptomDetailExtractor()
+
 
 # Define the nodes for the conversation graph
 def initialize_state() -> ConversationState:
@@ -40,36 +43,66 @@ def initialize_state() -> ConversationState:
         "current_action": "chat",
         "extracted_symptoms": [],
         "extracted_details": {},
-        "missing_field": None        
+        "missing_field": None,
     }
+
 
 def check_symptom_context(state: ConversationState) -> str:
     """Check if user input contains symptom-related context and return the next node."""
-    user_input = state["user_input"]  
-    
+    user_input = state["user_input"]
+
     # For initial greeting, go directly to generate_response
     if not user_input:
         return "generate_response"
-    
+
     # Check if user is requesting a summary
     if "summary" in user_input.lower() or "summarize" in user_input.lower():
         return "generate_summary"
-    
+
     # List of terms that might indicate symptom-related context
     # TODO: enhance the symptom indicators with knowledge-base or RAG.
     symptom_indicators = [
-        "pain", "ache", "hurt", "sore", "discomfort",
-        "fever", "temperature", "cough", "cold", "flu",
-        "headache", "migraine", "nausea", "vomit", "dizzy",
-        "tired", "fatigue", "exhaust", "weak", "symptom",
-        "feel", "felt", "feeling", "experiencing", "suffering",
-        "sick", "ill", "unwell", "doctor", "hospital",
-        "medicine", "medication", "treatment", "condition"
+        "pain",
+        "ache",
+        "hurt",
+        "sore",
+        "discomfort",
+        "fever",
+        "temperature",
+        "cough",
+        "cold",
+        "flu",
+        "headache",
+        "migraine",
+        "nausea",
+        "vomit",
+        "dizzy",
+        "tired",
+        "fatigue",
+        "exhaust",
+        "weak",
+        "symptom",
+        "feel",
+        "felt",
+        "feeling",
+        "experiencing",
+        "suffering",
+        "sick",
+        "ill",
+        "unwell",
+        "doctor",
+        "hospital",
+        "medicine",
+        "medication",
+        "treatment",
+        "condition",
     ]
-    
+
     # Check if any symptom indicator is present in user input
-    is_symptom_related = any(indicator in user_input.lower() for indicator in symptom_indicators)
-    
+    is_symptom_related = any(
+        indicator in user_input.lower() for indicator in symptom_indicators
+    )
+
     # Return the next node as a string, not a dict
     if is_symptom_related:
         return "extract_symptoms"
@@ -77,79 +110,78 @@ def check_symptom_context(state: ConversationState) -> str:
         # If not symptom-related, generate a response and skip symptom extraction
         return "generate_response"
 
+
 def extract_symptoms(state: ConversationState) -> ConversationState:
     """Extract symptoms from user input."""
     user_input = state["user_input"]
-    
+
     if not user_input:
         return state
-    
+
     # Extract symptoms
     extracted_symptoms = symptom_extractor.extract_symptoms(user_input)
-    
+
     # Update state
     if extracted_symptoms:
         return {
             **state,
             "extracted_symptoms": extracted_symptoms,
-            "current_action": "process_symptoms"
+            "current_action": "process_symptoms",
         }
     else:
         return {
             **state,
             "extracted_symptoms": [],
-            "current_action": "generate_response"  # If no symptoms found, go directly to generate_response
+            "current_action": "generate_response",  # If no symptoms found, go directly to generate_response
         }
+
 
 def process_symptoms(state: ConversationState) -> ConversationState:
     """Process extracted symptoms and add them to the symptom state."""
     symptom_state = state["symptom_state"]
     extracted_symptoms = state["extracted_symptoms"]
-    
+
     # Add each extracted symptom to the symptom state
     for symptom in extracted_symptoms:
         symptom_state.add_symptom(symptom)
-    
+
     # Update state
     return {
         **state,
         "symptom_state": symptom_state,
-        "current_action": "extract_details"
+        "current_action": "extract_details",
     }
+
 
 def extract_details(state: ConversationState) -> ConversationState:
     """Extract details for the current symptom."""
     symptom_state = state["symptom_state"]
     user_input = state["user_input"]
-    
+
     # If no current symptom, select one
     if not symptom_state.current_symptom and symptom_state.primary_symptoms:
         symptom_state.current_symptom = symptom_state.primary_symptoms[0]
-    
+
     # If no symptoms, skip detail extraction
     if not symptom_state.current_symptom:
-        return {
-            **state,
-            "current_action": "generate_response"
-        }
-    
+        return {**state, "current_action": "generate_response"}
+
     current_symptom = symptom_state.current_symptom
-    
+
     # Get the next missing field for the current symptom
     missing_field = symptom_state.get_next_missing_field(current_symptom)
-    
+
     # Extract details based on the missing field
     extracted_details = {}
-    
+
     if missing_field == "severity":
         severity_data = detail_extractor.extract_severity(current_symptom, user_input)
         if severity_data["level"] is not None:
             # Create a proper Severity object instead of using the dictionary directly
             extracted_details["severity"] = Severity(
-                level=severity_data["level"],
-                description=severity_data["description"]
+                level=severity_data["level"], description=severity_data["description"]
             )
-    
+
     elif missing_field in ["start_date", "is_ongoing"]:
         duration_data = detail_extractor.extract_duration(current_symptom, user_input)
         if any(v is not None for v in duration_data.values()):
@@ -157,127 +189,129 @@ def extract_details(state: ConversationState) -> ConversationState:
             extracted_details["duration"] = Duration(
                 start_date=duration_data["start_date"],
                 end_date=duration_data["end_date"],
-                is_ongoing=duration_data["is_ongoing"]
+                is_ongoing=duration_data["is_ongoing"],
             )
-    
-    elif missing_field in ["characteristics", "aggravating_factors", "relieving_factors", 
-                          "triggers", "associated_symptoms"]:
-        list_data = detail_extractor.extract_list_detail(current_symptom, missing_field, user_input)
+
+    elif missing_field in [
+        "characteristics",
+        "aggravating_factors",
+        "relieving_factors",
+        "triggers",
+        "associated_symptoms",
+    ]:
+        list_data = detail_extractor.extract_list_detail(
+            current_symptom, missing_field, user_input
+        )
         if list_data:
             extracted_details[missing_field] = list_data
-    
+
     else:
         # For other string fields
-        detail_value = detail_extractor.extract_detail(current_symptom, missing_field, user_input)
+        detail_value = detail_extractor.extract_detail(
+            current_symptom, missing_field, user_input
+        )
         if detail_value:
             extracted_details[missing_field] = detail_value
-    
+
     # Update state
     return {
         **state,
         "symptom_state": symptom_state,
         "extracted_details": extracted_details,
         "missing_field": missing_field,
-        "current_action": "update_symptom_details"
+        "current_action": "update_symptom_details",
     }
+
 
 def update_symptom_details(state: ConversationState) -> ConversationState:
     """Update symptom details in the symptom state."""
     symptom_state = state["symptom_state"]
     extracted_details = state["extracted_details"]
-    
+
     # If no current symptom or no extracted details, skip update
     if not symptom_state.current_symptom or not extracted_details:
-        return {
-            **state,
-            "current_action": "determine_next_action"
-        }
-    
+        return {**state, "current_action": "determine_next_action"}
+
     current_symptom = symptom_state.current_symptom
-    
+
     # Update symptom details
     try:
         symptom_state.update_symptom_detail(current_symptom, extracted_details)
     except ValueError:
         # If symptom not found, skip update
         pass
-    
+
     # Update state
     return {
         **state,
         "symptom_state": symptom_state,
-        "current_action": "determine_next_action"
+        "current_action": "determine_next_action",
     }
+
 
 def determine_next_action(state: ConversationState) -> ConversationState:
     """Determine the next action based on the current state."""
     symptom_state = state["symptom_state"]
-    
+
     # If no symptoms, generate response
     if not symptom_state.primary_symptoms:
-        return {
-            **state,
-            "current_action": "generate_response"
-        }
-    
+        return {**state, "current_action": "generate_response"}
+
     # If no current symptom, select one
     if not symptom_state.current_symptom:
         if symptom_state.primary_symptoms:
             symptom_state.current_symptom = symptom_state.primary_symptoms[0]
         else:
-            return {
-                **state,
-                "current_action": "generate_response"
-            }
-    
+            return {**state, "current_action": "generate_response"}
+
     current_symptom = symptom_state.current_symptom
-    
+
     # Check if there are missing fields for the current symptom
     missing_fields = symptom_state.missing_fields(current_symptom)
-    
+
     if missing_fields:
         # There are missing fields, ask about the next one
         return {
             **state,
             "symptom_state": symptom_state,
             "missing_field": missing_fields[0],
-            "current_action": "generate_question"
+            "current_action": "generate_question",
         }
     else:
         # No missing fields for current symptom, rotate to next symptom
         symptom_state.rotate_current_symptom()
-        
+
         # Check if the new current symptom has missing fields
         if symptom_state.current_symptom:
-            new_missing_fields = symptom_state.missing_fields(symptom_state.current_symptom)
+            new_missing_fields = symptom_state.missing_fields(
+                symptom_state.current_symptom
+            )
             if new_missing_fields:
                 return {
                     **state,
                     "symptom_state": symptom_state,
                     "missing_field": new_missing_fields[0],
-                    "current_action": "generate_question"
+                    "current_action": "generate_question",
                 }
-        
+
         # If no missing fields for any symptom, generate response
         return {
             **state,
             "symptom_state": symptom_state,
-            "current_action": "generate_response"
+            "current_action": "generate_response",
         }
+
 
 def generate_question(state: ConversationState) -> ConversationState:
     """Generate a question about a missing field."""
     symptom_state = state["symptom_state"]
     missing_field = state["missing_field"]
-    
+
     if not symptom_state.current_symptom or not missing_field:
-        return {
-            **state,
-            "current_action": "generate_response"
-        }
-    
+        return {**state, "current_action": "generate_response"}
+
     current_symptom = symptom_state.current_symptom
-    
+
     # Define the question prompt
     question_prompt = ChatPromptTemplate.from_template(
         """You are a medical assistant conducting a symptom assessment. 
@@ -291,39 +325,39 @@ def generate_question(state: ConversationState) -> ConversationState:
         I 
         Your question about the {missing_field} for {symptom}:"""
     )
-    
+
     # Format chat history for the prompt
-    chat_history_text = "\n".join([
-        f"{msg['role'].capitalize()}: {msg['content']}" 
-        for msg in state["chat_history"][-5:]  # Include only the last 5 messages
-    ])
-    
+    chat_history_text = "\n".join(
+        [
+            f"{msg['role'].capitalize()}: {msg['content']}"
+            for msg in state["chat_history"][-5:]  # Include only the last 5 messages
+        ]
+    )
+
     # Generate the question
     response = llm.invoke(
         question_prompt.format(
             missing_field=missing_field,
             symptom=current_symptom,
-            chat_history=chat_history_text
+            chat_history=chat_history_text,
         )
     )
-    
+
     # Update state
     return {
         **state,
         "ai_response": response.content,
-        "current_action": "update_history"
+        "current_action": "update_history",
     }
 
+
 def generate_response(state: ConversationState) -> ConversationState:
-    """Generate a general response.""" 
-    if not state['user_input']:
-        return {
-            **state,
-            "current_action": "update_history"
-        }
-    
+    """Generate a general response."""
+    if not state["user_input"]:
+        return {**state, "current_action": "update_history"}
+
     symptom_state = state["symptom_state"]
-    
+
     # Define the response prompt
     response_prompt = ChatPromptTemplate.from_template(
         """You are a medical assistant conducting a symptom assessment.
@@ -341,46 +375,50 @@ def generate_response(state: ConversationState) -> ConversationState:
         
         Your response:"""
     )
-    
+
     # Format symptoms and chat history for the prompt
-    symptoms_text = ", ".join(symptom_state.primary_symptoms) if symptom_state.primary_symptoms else "None"
-    
-    chat_history_text = "\n".join([
-        f"{msg['role'].capitalize()}: {msg['content']}" 
-        for msg in state["chat_history"][-5:]  # Include only the last 5 messages
-    ])
-    
+    symptoms_text = (
+        ", ".join(symptom_state.primary_symptoms)
+        if symptom_state.primary_symptoms
+        else "None"
+    )
+
+    chat_history_text = "\n".join(
+        [
+            f"{msg['role'].capitalize()}: {msg['content']}"
+            for msg in state["chat_history"][-5:]  # Include only the last 5 messages
+        ]
+    )
+
     # Generate the response
     response = llm.invoke(
         response_prompt.format(
             symptoms=symptoms_text,
             chat_history=chat_history_text,
-            user_input=state["user_input"]
+            user_input=state["user_input"],
         )
     )
-    
+
     # Update state
     return {
         **state,
         "ai_response": response.content,
-        "current_action": "update_history"
+        "current_action": "update_history",
     }
+
 
 def generate_summary(state: ConversationState) -> ConversationState:
     """Generate a summary of all symptoms."""
     symptom_state = state["symptom_state"]
-    
+
     if not symptom_state.primary_symptoms:
         summary = "No symptoms have been recorded yet."
     else:
         summary = symptom_state.get_session_summary()
-    
+
     # Update state
-    return {
-        **state,
-        "ai_response": summary,
-        "current_action": "update_history"
-    }
+    return {**state, "ai_response": summary, "current_action": "update_history"}
+
 
 def chat(state: ConversationState) -> ConversationState:
     """Generate a greeting message."""
@@ -388,9 +426,11 @@ def chat(state: ConversationState) -> ConversationState:
     if state["user_input"]:
         return {
             **state,
-            "current_action": check_symptom_context(state)  # Use the function to determine the next action
+            "current_action": check_symptom_context(
+                state
+            ),  # Use the function to determine the next action
         }
-    
+
     # For initial greeting (no user input)
     greeting_prompt = ChatPromptTemplate.from_template(
         """You are a medical assistant designed to document symptoms.
@@ -404,49 +444,41 @@ def chat(state: ConversationState) -> ConversationState:
         
         Your greeting:"""
     )
-        
+
     # Generate the greeting
     response = llm.invoke(greeting_prompt.format())
-    
+
     # Update state
     return {
         **state,
         "ai_response": response.content,
-        "current_action": "generate_response"
+        "current_action": "generate_response",
     }
+
 
 def update_history(state: ConversationState) -> ConversationState:
     """Update the chat history with the latest user input and AI response."""
     chat_history = state["chat_history"].copy()
-    
+
     # Add user message if it exists
     if state["user_input"]:
-        chat_history.append({
-            "role": "user",
-            "content": state["user_input"]
-        })
-    
+        chat_history.append({"role": "user", "content": state["user_input"]})
+
     # Add AI response
-    chat_history.append({
-        "role": "assistant",
-        "content": state["ai_response"]
-    })
-    
+    chat_history.append({"role": "assistant", "content": state["ai_response"]})
+
     # Update state
-    return {
-        **state,
-        "chat_history": chat_history,
-        "current_action": END
-    }
+    return {**state, "chat_history": chat_history, "current_action": END}
+
 
 # Create the conversation graph
 def create_conversation_graph() -> StateGraph:
     """Create the conversation graph."""
     # Initialize the workflow
     workflow = StateGraph(ConversationState)
-    
+
     # Add nodes
-    workflow.add_node("chat", chat)    
+    workflow.add_node("chat", chat)
     workflow.add_node("extract_symptoms", extract_symptoms)
     workflow.add_node("process_symptoms", process_symptoms)
     workflow.add_node("extract_details", extract_details)
@@ -456,7 +488,7 @@ def create_conversation_graph() -> StateGraph:
     workflow.add_node("generate_response", generate_response)
     workflow.add_node("generate_summary", generate_summary)
     workflow.add_node("update_history", update_history)
-    
+
     # Add conditional edges
     workflow.add_conditional_edges(
         "chat",
@@ -464,38 +496,40 @@ def create_conversation_graph() -> StateGraph:
         {
             "extract_symptoms": "extract_symptoms",
             "generate_response": "generate_response",
-            "generate_summary": "generate_summary"
+            "generate_summary": "generate_summary",
         },
     )
-    
+
     workflow.add_edge("extract_symptoms", "process_symptoms")
     workflow.add_edge("process_symptoms", "extract_details")
     workflow.add_edge("extract_details", "update_symptom_details")
     workflow.add_edge("update_symptom_details", "determine_next_action")
-    
-   # Conditional edges from determine_next_action
+
+    # Conditional edges from determine_next_action
     workflow.add_conditional_edges(
         "determine_next_action",
         lambda x: x["current_action"],
         {
             "generate_question": "generate_question",
-            "generate_response": "generate_response"
+            "generate_response": "generate_response",
         },
     )
-    
+
     # All responses lead to update_history
     workflow.add_edge("generate_question", "update_history")
     workflow.add_edge("generate_response", "update_history")
     workflow.add_edge("generate_summary", "update_history")
-        
+
     # Set entry point
     workflow.set_entry_point("chat")
-    
+
     # Compile the graph
     return workflow.compile()
 
+
 # Create the conversation agent
 conversation_graph = create_conversation_graph()
+
 
 # Visualize the workflow
 def display_workflow():
@@ -503,19 +537,19 @@ def display_workflow():
     import os
     import tempfile
     import webbrowser
-    
+
     # Get the Mermaid markdown content directly
     mermaid_code = conversation_graph.get_graph(xray=1).draw_mermaid()
-    
+
     # Save to a temporary file
     temp_dir = tempfile.gettempdir()
     mermaid_path = os.path.join(temp_dir, "workflow_diagram.mmd")
     html_path = os.path.join(temp_dir, "workflow_diagram.html")
-    
+
     # Write the Mermaid markdown to the file
     with open(mermaid_path, "w") as f:
         f.write(mermaid_code)
-    
+
     # Create an HTML file with embedded Mermaid that works offline
     html_content = f"""
     <!DOCTYPE html>
@@ -534,10 +568,10 @@ def display_workflow():
     </body>
     </html>
     """
-    
+
     with open(html_path, "w") as f:
         f.write(html_content)
-    
+
     # Open the HTML file with the default web browser
     print(f"Opening workflow diagram at: {html_path}")
     try:
@@ -550,19 +584,22 @@ def display_workflow():
             print(f"Could not open the HTML file: {e}")
             print(f"The diagram has been saved to: {mermaid_path}")
             print(f"The HTML viewer has been saved to: {html_path}")
-    
+
     # Also print the Mermaid code to console for reference
     print("\nMermaid diagram code:")
     print(mermaid_code)
-    
+
     return mermaid_code
 
-# Set configuration 
+
+# Set configuration
 config = {"configurable": {"thread_id": "1", "user_id": "1"}}
 
-    
+
 # Function to process user input
-def process_user_input(user_input: str, state: Optional[ConversationState] = None) -> Tuple[str, ConversationState]:
+def process_user_input(
+    user_input: str, state: Optional[ConversationState] = None
+) -> Tuple[str, ConversationState]:
     """Process user input and return the AI response and updated state."""
     # Initialize state if not provided
     if state is None:
@@ -570,17 +607,17 @@ def process_user_input(user_input: str, state: Optional[ConversationState] = Non
         # Run the graph to get the greeting
         state = conversation_graph.invoke(state)
         return state["ai_response"], state
-    
+
     # Update state with user input
     state = {
         **state,
         "user_input": user_input,
-        "current_action": "check_symptom_context"  # Set to our new conditional check
+        "current_action": "check_symptom_context",  # Set to our new conditional check
     }
-    
+
     # Run the graph
     state = conversation_graph.invoke(state)
-    
+
     # Return the AI response and updated state
     return state["ai_response"], state
 
