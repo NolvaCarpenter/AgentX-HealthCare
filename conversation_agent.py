@@ -4,16 +4,21 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 from langgraph.graph import StateGraph, END
 from typing import Dict, List, Any, TypedDict, Optional, Tuple, Literal
-import json
-from datetime import datetime
+import os
+import tempfile
+import webbrowser
 
 from symptoms.symptom_state import SymptomState, SymptomDetail, Severity, Duration
 from symptoms.symptom_extraction import SymptomExtractor, SymptomDetailExtractor
-from IPython.display import Image, display
+from medications.medication_extraction import MedicationProcessState
+
+from medications.medication_extraction import graph as med_builder
+from medications.handle_upload import validate_medication_image, get_available_samples
 
 
 # Define the state schema for the conversation graph
 class ConversationState(TypedDict):
+    user_id: str
     symptom_state: SymptomState
     chat_history: List[Dict[str, str]]
     user_input: str
@@ -22,6 +27,8 @@ class ConversationState(TypedDict):
     extracted_symptoms: List[str]
     extracted_details: Dict[str, Any]
     missing_field: Optional[str]
+    filename: str
+    medication_state: MedicationProcessState
 
 
 # Initialize the language model
@@ -36,6 +43,7 @@ detail_extractor = SymptomDetailExtractor()
 def initialize_state() -> ConversationState:
     """Initialize the conversation state."""
     return {
+        "user_id": "default_user",
         "symptom_state": SymptomState(),
         "chat_history": [],
         "user_input": "",
@@ -44,7 +52,55 @@ def initialize_state() -> ConversationState:
         "extracted_symptoms": [],
         "extracted_details": {},
         "missing_field": None,
+        "filename": "",
+        "medication_state": MedicationProcessState(),
     }
+
+
+def prepare_medication_upload(state: ConversationState) -> ConversationState:
+    """
+    Handle medication label upload preparation.
+    Updates the state with the validated filename.
+
+    Args:
+        state (ConversationState): The current conversation state
+
+    Returns:
+        ConversationState: The updated state
+    """
+    # Display available samples
+    print("\nMedication Label Upload:")
+    samples = get_available_samples()
+    if samples:
+        print(f"Available sample files: {', '.join(samples)}")
+    else:
+        print("No sample files found in default directory.")
+
+    # Prompt for filename
+    filename = input(
+        "Enter medication label image filename (or press Enter for default): "
+    ).strip()
+
+    # Validate the filename
+    valid_filename, message = validate_medication_image(filename)
+    print(message)
+
+    if valid_filename:
+        print(f"Processing file: {valid_filename}")
+        # Return updated state with t Fashion he filename and next action
+        return {
+            **state,
+            "filename": valid_filename,
+            "ai_response": f"I've successfully processed your medication label from the file: {valid_filename}. Any other things you want to share with me?",
+            "current_action": "extract_medication_labels",
+        }
+    else:
+        print("Could not process medication label. Please try again.")
+        return {
+            **state,
+            "ai_response": "I couldn't process the medication label. Please try again with a valid image file.",
+            "current_action": "generate_response",
+        }
 
 
 def check_symptom_context(state: ConversationState) -> str:
@@ -57,7 +113,11 @@ def check_symptom_context(state: ConversationState) -> str:
 
     # Check if user is requesting a summary
     if "summary" in user_input.lower() or "summarize" in user_input.lower():
-        return "generate_summary"
+        return "generate_summary"  # upload photo or medication label
+
+    # Check if user is uploading a medication label
+    if "upload" in user_input.lower() or "photo" in user_input.lower():
+        return "prepare_medication_upload"
 
     # List of terms that might indicate symptom-related context
     # TODO: enhance the symptom indicators with knowledge-base or RAG.
@@ -106,6 +166,9 @@ def check_symptom_context(state: ConversationState) -> str:
     # Return the next node as a string, not a dict
     if is_symptom_related:
         return "extract_symptoms"
+    # TODO: check if user has medication or drug related to symptoms
+    # elif "medication" in user_input.lower() or "drug" in user_input.lower():
+    #     return "extract_medications"
     else:
         # If not symptom-related, generate a response and skip symptom extraction
         return "generate_response"
@@ -319,10 +382,13 @@ def generate_question(state: ConversationState) -> ConversationState:
         
         Ask a clear, specific question in a natural, empathetic tone.
         Keep your question concise and focused only on the {missing_field}.
+
+        Asks if any medications have been taken related to "{symptom}" recently.
+        Then ask to take a photo and upload medication labels.
         
         Previous conversation:
         {chat_history}
-        I 
+        
         Your question about the {missing_field} for {symptom}:"""
     )
 
@@ -410,11 +476,17 @@ def generate_response(state: ConversationState) -> ConversationState:
 def generate_summary(state: ConversationState) -> ConversationState:
     """Generate a summary of all symptoms."""
     symptom_state = state["symptom_state"]
+    medication_state = state["medication_state"]
 
     if not symptom_state.primary_symptoms:
         summary = "No symptoms have been recorded yet."
     else:
         summary = symptom_state.get_session_summary()
+
+    if not medication_state.primary_medications:
+        summary += "\nNo medications have been recorded yet."
+    else:
+        summary += medication_state.get_session_summary()
 
     # Update state
     return {**state, "ai_response": summary, "current_action": "update_history"}
@@ -473,11 +545,8 @@ def update_history(state: ConversationState) -> ConversationState:
 
 # Create the conversation graph
 def create_conversation_graph() -> StateGraph:
-    """Create the conversation graph."""
-    # Initialize the workflow
-    workflow = StateGraph(ConversationState)
-
-    # Add nodes
+    """Create the conversation graph."""  # Initialize the workflow
+    workflow = StateGraph(ConversationState)  # Add nodes
     workflow.add_node("chat", chat)
     workflow.add_node("extract_symptoms", extract_symptoms)
     workflow.add_node("process_symptoms", process_symptoms)
@@ -487,9 +556,9 @@ def create_conversation_graph() -> StateGraph:
     workflow.add_node("generate_question", generate_question)
     workflow.add_node("generate_response", generate_response)
     workflow.add_node("generate_summary", generate_summary)
-    workflow.add_node("update_history", update_history)
-
-    # Add conditional edges
+    workflow.add_node("prepare_medication_upload", prepare_medication_upload)
+    workflow.add_node("extract_medication_labels", med_builder.compile())
+    workflow.add_node("update_history", update_history)  # Add conditional edges
     workflow.add_conditional_edges(
         "chat",
         lambda x: x["current_action"],
@@ -497,6 +566,7 @@ def create_conversation_graph() -> StateGraph:
             "extract_symptoms": "extract_symptoms",
             "generate_response": "generate_response",
             "generate_summary": "generate_summary",
+            "prepare_medication_upload": "prepare_medication_upload",
         },
     )
 
@@ -519,6 +589,17 @@ def create_conversation_graph() -> StateGraph:
     workflow.add_edge("generate_question", "update_history")
     workflow.add_edge("generate_response", "update_history")
     workflow.add_edge("generate_summary", "update_history")
+    workflow.add_edge("extract_medication_labels", "update_history")
+
+    # Add conditional edges from prepare_medication_upload based on current_action
+    workflow.add_conditional_edges(
+        "prepare_medication_upload",
+        lambda x: x["current_action"],
+        {
+            "extract_medication_labels": "extract_medication_labels",
+            "generate_response": "generate_response",
+        },
+    )
 
     # Set entry point
     workflow.set_entry_point("chat")
@@ -534,10 +615,6 @@ conversation_graph = create_conversation_graph()
 # Visualize the workflow
 def display_workflow():
     """Display the workflow as a Mermaid diagram."""
-    import os
-    import tempfile
-    import webbrowser
-
     # Get the Mermaid markdown content directly
     mermaid_code = conversation_graph.get_graph(xray=1).draw_mermaid()
 
