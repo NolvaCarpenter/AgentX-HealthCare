@@ -10,9 +10,9 @@ import webbrowser
 
 from symptoms.symptom_state import SymptomState, SymptomDetail, Severity, Duration
 from symptoms.symptom_extraction import SymptomExtractor, SymptomDetailExtractor
-from medications.medication_extraction import MedicationProcessState
 
-from medications.medication_extraction import graph as med_builder
+from medications.medication_state import build_medication_workflow
+from medications.medication_extraction import MedicationProcessState, MedicationLabel
 from medications.handle_upload import validate_medication_image, get_available_samples
 
 
@@ -29,6 +29,7 @@ class ConversationState(TypedDict):
     missing_field: Optional[str]
     filename: str
     medication_state: MedicationProcessState
+    extracted_medications: Dict[str, MedicationLabel]
 
 
 # Initialize the language model
@@ -54,6 +55,7 @@ def initialize_state() -> ConversationState:
         "missing_field": None,
         "filename": "",
         "medication_state": MedicationProcessState(),
+        "extracted_medications": {},
     }
 
 
@@ -101,6 +103,55 @@ def prepare_medication_upload(state: ConversationState) -> ConversationState:
             "ai_response": "I couldn't process the medication label. Please try again with a valid image file.",
             "current_action": "generate_response",
         }
+
+
+def extract_medication_labels(state: ConversationState) -> ConversationState:
+    """
+    Extract medication information from label images.
+    Processes the medication label and updates extracted_medications in the conversation state.
+
+    Args:
+        state (ConversationState): The current conversation state
+
+    Returns:
+        ConversationState: The updated state with extracted medication information
+    """
+    # Get the current medication state and filename
+    medication_state = state["medication_state"]
+    filename = state["filename"]
+
+    # Update the medication state with the filename
+    medication_state.filename = (
+        filename  # Run the medication workflow to extract information
+    )
+    medication_workflow = build_medication_workflow()
+    processed_state = medication_workflow.invoke(medication_state)
+
+    # If processed_state is an AdjustableValueDict, convert it to a MedicationProcessState
+    if isinstance(processed_state, dict):
+        processed_state = MedicationProcessState(**processed_state)
+
+    # Get the extracted medication label
+    extracted_label = processed_state.label
+
+    # If a medication was successfully extracted, add it to extracted_medications
+    extracted_medications = state.get("extracted_medications", {})
+    if extracted_label:
+        # Use the drug name as the key for the medication
+        drug_name = (
+            extracted_label.drug_name
+            if extracted_label.drug_name
+            else "Unknown Medication"
+        )
+        extracted_medications[drug_name] = extracted_label
+
+    # Update state with processed medication information
+    return {
+        **state,
+        "medication_state": processed_state,
+        "extracted_medications": extracted_medications,
+        "current_action": "generate_response",
+    }
 
 
 def check_symptom_context(state: ConversationState) -> str:
@@ -478,18 +529,23 @@ def generate_summary(state: ConversationState) -> ConversationState:
     symptom_state = state["symptom_state"]
     medication_state = state["medication_state"]
 
+    summary = []
     if not symptom_state.primary_symptoms:
-        summary = "No symptoms have been recorded yet."
+        summary.append("No symptoms have been recorded yet.")
     else:
-        summary = symptom_state.get_session_summary()
+        summary.append("\n" + symptom_state.get_session_summary())
 
-    if not medication_state.primary_medications:
-        summary += "\nNo medications have been recorded yet."
+    if not medication_state.label:
+        summary.append("\nNo medications have been recorded yet.")
     else:
-        summary += medication_state.get_session_summary()
+        summary.append("\n" + medication_state.get_session_summary())
 
     # Update state
-    return {**state, "ai_response": summary, "current_action": "update_history"}
+    return {
+        **state,
+        "ai_response": "\n".join(summary),
+        "current_action": "update_history",
+    }
 
 
 def chat(state: ConversationState) -> ConversationState:
@@ -545,8 +601,10 @@ def update_history(state: ConversationState) -> ConversationState:
 
 # Create the conversation graph
 def create_conversation_graph() -> StateGraph:
-    """Create the conversation graph."""  # Initialize the workflow
-    workflow = StateGraph(ConversationState)  # Add nodes
+    """Create the conversation graph."""
+    # Initialize the workflow
+    workflow = StateGraph(ConversationState)
+    # Add nodes
     workflow.add_node("chat", chat)
     workflow.add_node("extract_symptoms", extract_symptoms)
     workflow.add_node("process_symptoms", process_symptoms)
@@ -557,8 +615,9 @@ def create_conversation_graph() -> StateGraph:
     workflow.add_node("generate_response", generate_response)
     workflow.add_node("generate_summary", generate_summary)
     workflow.add_node("prepare_medication_upload", prepare_medication_upload)
-    workflow.add_node("extract_medication_labels", med_builder.compile())
-    workflow.add_node("update_history", update_history)  # Add conditional edges
+    workflow.add_node("extract_medication_labels", extract_medication_labels)
+    workflow.add_node("update_history", update_history)
+    # Add edges between nodes
     workflow.add_conditional_edges(
         "chat",
         lambda x: x["current_action"],
@@ -569,12 +628,10 @@ def create_conversation_graph() -> StateGraph:
             "prepare_medication_upload": "prepare_medication_upload",
         },
     )
-
     workflow.add_edge("extract_symptoms", "process_symptoms")
     workflow.add_edge("process_symptoms", "extract_details")
     workflow.add_edge("extract_details", "update_symptom_details")
     workflow.add_edge("update_symptom_details", "determine_next_action")
-
     # Conditional edges from determine_next_action
     workflow.add_conditional_edges(
         "determine_next_action",

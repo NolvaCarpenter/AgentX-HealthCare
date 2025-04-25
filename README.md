@@ -23,14 +23,16 @@ The system is built using Python with LangChain and LangGraph frameworks, and co
    - Contains `SymptomExtractor` for identifying symptoms in user input
    - Contains `SymptomDetailExtractor` for extracting specific details about symptoms
 
-3. **Conversation Agent** (`conversation_agent.py`):
+3. **Medication Label Extraction** (`medication_extraction.py`):
+   - Implements `MedicationExtractor` for identifying medication information from user input
+   - Extracts medication names, dosages, frequency, and route of administration
+   - Processes both structured and unstructured medication descriptions
+   - Helps reconcile medication information with symptom data
+
+4. **Conversation Agent** (`conversation_agent.py`):
    - Implements the conversation flow using LangGraph
    - Manages the state transitions between different actions (greeting, extracting symptoms, asking questions, etc.)
    - Processes user input and generates appropriate responses
-
-4. **Symptom Reference** (`symptom_reference.py`):
-   - Integrates with Mayo Clinic symptom reference data
-   - Provides additional information about symptoms for enhanced responses
 
 5. **Main Application** (`main.py`):
    - Provides a command-line interface for interacting with the agent

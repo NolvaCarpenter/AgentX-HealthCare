@@ -9,16 +9,16 @@ from langchain_core.prompts import (
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.runnables import RunnableMap
-from langgraph.graph import StateGraph
-
-# from langchain.agents import Tool, AgentExecutor
 from langchain_core.tools import ToolException
-from pydantic import BaseModel, Field
+import pytesseract
+from PIL import Image
+from medications.medication_state import MedicationLabel, MedicationProcessState
+
+from langchain_core.tools import ToolException
 import pytesseract
 from PIL import Image
 import sqlite3
 from datetime import datetime
-import uuid
 
 # Configurations
 pytesseract.pytesseract.tesseract_cmd = os.getenv("TESSERACT_CMD", "/usr/bin/tesseract")
@@ -34,12 +34,11 @@ def parse_label_image(filename: str) -> str:
     Args:
         filename (str): Path to the image file.
     """
-
     try:
         # Get the base directory of the project
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-        # Ensure I missed the call but they left a message saying we need to go pick up Eris well maybe her belly stick shall we take her to a urgent care Yeah let's take the first time and let them know you're doing OK Hi this is Lindy i'm iris small we have a proper path to the image file
+        # Construct the proper path to the image file
         if os.path.isabs(filename):
             absolute_path = filename
         else:
@@ -57,34 +56,7 @@ def parse_label_image(filename: str) -> str:
         raise ToolException(f"Failed to process image: {str(e)}")
 
 
-# Step 2: Pydantic Schema for Medication Data
-class MedicationLabel(BaseModel):
-    pharmacy_name: str = Field(default="")
-    pharmacy_address: str = Field(default="")
-    pharmacy_phone: str = Field(default="")
-    patient_name: str = Field(default="")
-    patient_address: str = Field(default="")
-    drug_name: str = Field(...)  # required field
-    drug_strength: str = Field(default="")
-    drug_instructions: str = Field(default="")
-    pill_markings: str = Field(default="")
-    manufacturer: str = Field(default="")
-    ndc_upc: str = Field(default="")
-    rx_written_date: str = Field(default="")
-    discard_after: str = Field(default="")
-    federal_caution: str = Field(default="")
-    rx_number: str = Field(default="")
-    refill_count: int = Field(default=0)
-    prescriber_name: str = Field(default="")
-    reorder_after: str = Field(default="")
-    qty_filled: int = Field(default=0)
-    location_code: str = Field(default="")
-    filled_date: str = Field(default="")
-    pharmacist: str = Field(default="")
-    barcode: str = Field(default="")
-
-
-# Step 3: Agentic pipeline for Structuring Text
+# Step 2: Agentic pipeline for Structuring Text
 parser = PydanticOutputParser(pydantic_object=MedicationLabel)
 
 llm = ChatOpenAI(model="gpt-4o", temperature=0)
@@ -95,7 +67,6 @@ system_prompt = SystemMessagePromptTemplate.from_template(
     - Extract the brand name(s) if available from drug labels, if not drug or medication name(s).
     - Carefully extract medication details from prescription labels and pharmacy documentation.
     
-
     Important Guidelines:
     - Pay special attention to brand names or drug names, including both brand and generic names
     - Extract precise drug facts such as ingredient names, strength and purpose information
@@ -132,15 +103,81 @@ runable = RunnableMap(
 extract_structured_data = runable | prompt | llm | parser
 
 
-# Step 4: SQLite for Storing Medications
+# Step 3: LangGraph Steps
+def ocr_step(state: MedicationProcessState) -> MedicationProcessState:
+    """
+    Execute OCR on the medication label image.
+
+    Args:
+        state: Current processing state
+
+    Returns:
+        Updated state with raw text extracted from the image
+    """
+    text = parse_label_image.run(state.filename)
+    return state.model_copy(update={"raw_text": text})
+
+
+def extract_step(state: MedicationProcessState) -> MedicationProcessState:
+    """
+    Extract structured medication data from raw OCR text.
+
+    Args: There is some
+        state: Current processing state with OCR text
+
+    Returns:
+        Updated state with structured medication label data
+    """
+    # Clean up text if needed before passing to LLM
+    cleaned_text = state.raw_text.strip()
+
+    # Extract structured data using LLM
+    label = extract_structured_data.invoke({"raw_text": cleaned_text})
+
+    return state.model_copy(update={"label": label})
+
+
+def validate_step(state: MedicationProcessState) -> MedicationProcessState:
+    """
+    Validates the extracted medication information.
+    In a production environment, this would include user interaction.
+    """
+    print("\nFinal Medication Information Summary:")
+    print("====================================")
+    for field, value in state.label.model_dump().items():
+        if value:
+            print(f"{field.replace('_', ' ').title()}: {value}")
+
+    # In a real application, you would add user validation here
+    # For now, we'll assume the information is correct
+    final_confirm = (
+        input("\nStore this medication information in the database? (y/n): ")
+        .lower()
+        .strip()
+    )
+
+    if final_confirm == "y":
+        store_medication(state.user_id, state.label)
+
+        # Add the validated label to the medications list
+        updated_medications = state.medications.copy()
+        updated_medications.append(state.label)
+
+        return state.model_copy(
+            update={"validated": True, "medications": updated_medications}
+        )
+    else:
+        return state.model_copy(update={"validated": False})
+
+
 def store_medication(user_id: str, label: MedicationLabel):
     conn = sqlite3.connect("bayman_agentx_health.db")
     c = conn.cursor()
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS medications (
-            user_id UUID,
-            label_uploaded_datetime DATETIME,
+            user_id TEXT,
+            label_uploaded_datetime TEXT,
             pharmacy_name TEXT,
             pharmacy_address TEXT,
             pharmacy_phone TEXT,
@@ -207,179 +244,38 @@ def store_medication(user_id: str, label: MedicationLabel):
     conn.close()
 
 
-# Step 5: LangGraph State and Nodes
-class MedicationProcessState(BaseModel):
-    user_id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()), description="Unique user ID"
-    )
-    filename: str = Field(
-        default="data/drug_labels/prescription label example.png",
-        description="Path to the medication label image",
-    )
-    raw_text: str = ""
-    label: MedicationLabel | None = None
-    validated: bool = False
+# Function to test the extraction pipeline
+def test_medication_extraction(image_path: str):
+    """
+    Test the medication extraction pipeline on a single image.
 
-    def get_medication_summary(self) -> str:
-        """Get a summary of the medication in the current state."""
-        if not self.label:
-            return "No medication information available."
+    Args:
+        image_path: Path to the medication label image
 
-        label = self.label
-        summary = [f"Medication: {label.drug_name}"]
+    Returns:
+        Extracted MedicationLabel object
+    """
+    # Create initial state
+    state = MedicationProcessState(filename=image_path)
 
-        if label.drug_strength:
-            summary.append(f"Strength: {label.drug_strength}")
+    # Run OCR
+    state = ocr_step(state)
+    print(f"OCR Text Extracted: {len(state.raw_text)} characters")
 
-        if label.drug_instructions:
-            summary.append(f"Instructions: {label.drug_instructions}")
+    # Extract structured data
+    state = extract_step(state)
 
-        if label.pharmacy_name:
-            summary.append(f"Pharmacy: {label.pharmacy_name}")
-
-        if label.pharmacy_phone:
-            summary.append(f"Pharmacy Phone: {label.pharmacy_phone}")
-
-        if label.prescriber_name:
-            summary.append(f"Prescribed by: {label.prescriber_name}")
-
-        if label.rx_number:
-            summary.append(f"Rx Number: {label.rx_number}")
-
-        if label.filled_date:
-            summary.append(f"Filled Date: {label.filled_date}")
-
-        if label.discard_after:
-            summary.append(f"Discard After: {label.discard_after}")
-
-        if label.refill_count:
-            summary.append(f"Refills Remaining: {label.refill_count}")
-
-        if label.qty_filled:
-            summary.append(f"Quantity: {label.qty_filled}")
-
-        if label.federal_caution:
-            summary.append(f"Warning: {label.federal_caution}")
-
-        if label.patient_name:
-            summary.append(f"Patient: {label.patient_name}")
-
-        return "\n".join(summary)
-
-
-def get_session_summary(self) -> str:
-    """Get a summary of all medications in the session."""
-    if not self.label:
-        return "No medication information available."
-
-    summary = []
-    for medication in self.medications:
-        summary.append(medication.get_medication_summary())
-
-    return "\n\n".join(summary)
-
-
-def ocr_step(state: MedicationProcessState) -> MedicationProcessState:
-    text = parse_label_image.run(state.filename)
-    return state.model_copy(update={"raw_text": text})
-
-
-def extract_step(state: MedicationProcessState) -> MedicationProcessState:
-    # TODO: Possibly clean up text here before passing to LLM
-    label = extract_structured_data.invoke({"raw_text": state.raw_text})
-    return state.model_copy(update={"label": label})
-
-
-def human_validation(state: MedicationProcessState) -> MedicationProcessState:
-    # Human validation step
-    print("\nPlease review the extracted medication information:")
+    # Print summary
+    print("\nExtracted Medication Information:")
     print("====================================")
+    print(state.get_medication_summary())
 
-    # Convert label to dict for easier manipulation
-    label_dict = state.label.model_dump()
-
-    # Present each field to user for validation
-    for field, value in label_dict.items():
-        if value:  # Only show non-empty fields
-            print(f"\n{field.replace('_', ' ').title()}: {value}")
-
-            # TODO: implmenet the human validation step on the web page
-            # valid = input("Is this information correct? (y/n): ").lower().strip()
-
-            # if valid == "n":
-            #     new_value = input(
-            #         f"Please enter the correct {field.replace('_', ' ')}: "
-            #     ).strip()
-            #     if field in ["refill_count", "qty_filled"]:
-            #         try:
-            #             label_dict[field] = int(new_value) if new_value else 0
-            #         except ValueError:
-            #             print(f"Invalid input for {field}. Keeping original value.")
-            #     else:
-            #         label_dict[field] = new_value
-
-    # Create new MedicationLabel instance with validated data
-    # validated_label = MedicationLabel(**label_dict)
-
-    return MedicationLabel(**label_dict)
+    return state.label
 
 
-def validate_step(state: MedicationProcessState) -> MedicationProcessState:
-
-    # validated_label = human_validation(state)
-
-    # Final confirmation before storing
-    print("\nFinal Medication Information Summary:")
-    print("====================================")
-    for field, value in state.label.model_dump().items():
-        if value:
-            print(f"{field.replace('_', ' ').title()}: {value}")
-
-    final_confirm = (
-        input("\nStore this medication information in the database? (y/n): ")
-        .lower()
-        .strip()
-    )
-
-    if final_confirm == "y":
-        store_medication(state.user_id, state.label)
-        return state.model_copy(update={"validated": True, "label": state.label})
-    else:
-        return state.model_copy(update={"validated": False})
-
-
-# # Using the tool in an agent
-# tools = [
-#     Tool(
-#         name="OCR_Parser",
-#         func=parse_label_image,
-#         description="Extract text from medication label images",
-#     )
-# ]
-
-# Build Graph
-graph = StateGraph(MedicationProcessState)
-graph.add_node("ocr", ocr_step)
-graph.add_node("extract", extract_step)
-graph.add_node("validate", validate_step)
-graph.set_entry_point("ocr")
-graph.add_edge("ocr", "extract")
-graph.add_edge("extract", "validate")
-graph.set_finish_point("validate")
-
-drug_assistant = graph.compile()
-
-# Example Run
+# For testing in standalone mode
 if __name__ == "__main__":
-    state = MedicationProcessState(
-        # TEST USER
-        user_id="7fdb7c3b-f5c2-493c-be52-ebf75ce74cc0",  # str(uuid.uuid4()), # Unique user ID
-        # filename="data/drug_labels/DAYTIME_COLD_AND_FLU_NON_DROWSY.jpeg",
-        filename="data/drug_labels/prescription label example.png",
-    )
-    result = drug_assistant.invoke(state)
-    # Convert result to dict to access its values
-    result_dict = dict(result)
-    if "label" in result_dict:
-        print("Medication Label:", result_dict["label"])
-    print("Validated and stored in DB:", result_dict.get("validated", False))
+    test_image = "data/drug_labels/prescription label example.png"
+    label = test_medication_extraction(test_image)
+    print("\nComplete Label Data:")
+    print(label.model_dump_json(indent=2))
