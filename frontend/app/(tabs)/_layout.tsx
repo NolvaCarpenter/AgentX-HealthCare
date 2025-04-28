@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router'
-import { Bot, ClipboardList } from 'lucide-react-native'
+import { Bot, ClipboardList, Activity, Stethoscope } from 'lucide-react-native'
 
 export default function TabsLayout() {
   return (
@@ -12,12 +12,26 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="health_summaries"
+        name="medical_record"
         options={{
-          title: 'Summaries',
+          title: 'record',
+          tabBarIcon: ({ color, size }) => <Stethoscope size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="health_summary"
+        options={{
+          title: 'summary',
           tabBarIcon: ({ color, size }) => <ClipboardList size={size} color={color} />,
         }}
       />
+      <Tabs.Screen
+        name="index"
+        options={{
+          href: null
+        }}
+      />
+
     </Tabs>
   )
 }
