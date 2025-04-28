@@ -4,7 +4,7 @@ import React from 'react'
 
 export default function health_summary() {
   return (
-    <View>
+    <View style={{ flex: 1, backgroundColor: 'white' }}>
       <ModalManager/>
     </View>
   )
