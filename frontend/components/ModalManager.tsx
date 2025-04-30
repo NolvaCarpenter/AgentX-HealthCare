@@ -104,13 +104,6 @@ export default function ModalManager() {
 
   return (
     <View className="flex-1 bg-gray-100">
-      {/* 탭 버튼 */}
-      {/* <View className="flex-row justify-center mt-4 space-x-4">
-        <Button title="Medications" onPress={() => setActiveTab("medications")} />
-        <Button title="Symptoms" onPress={() => setActiveTab("symptoms")} />
-      </View> */}
-
-      {/* 메인 내용 */}
       <ScrollView className="p-4">
         {(
           <View>
@@ -176,10 +169,8 @@ export default function ModalManager() {
                 />
               </View>
             ))}
-
           </ScrollView>
 
-          {/* 저장 버튼 */}
           <View className="flex-row justify-between mt-6">
               <Button title="Cancel" color="red" onPress={() => setShowModal(false)} />
               <Button title="Save" onPress={handleSave} />
