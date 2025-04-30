@@ -1,36 +1,38 @@
 import React, { useState } from 'react'
 import { ScrollView, Switch, Text, View } from 'react-native'
 import PatientList from '@/components/PatientList'
-import MedicationManager from '@/components/MedicationManager'
-import SymptomManager from '@/components/SymptomManager'
+// import MedicationManager from '@/components/MedicationManager'
+// import SymptomManager from '@/components/SymptomManager'
 import { Patient } from '@/types/patient'
+import SymptomModalManager from '@/components/SyptomModalManager'
+import MedicationModalManager from '@/components/MedicationModalManager'
 
 // mock data
-const mockPatients: Patient[] = [
-  {
-    id: 'p1',
-    name: 'John Smith',
-    age: 72,
-    avatar: '',
-    healthData: {
-      medications: [
-        { id: 'm1', drugName: 'Lisinopril', dosage: '10mg' },
-        { id: 'm2', drugName: 'Aspirin', dosage: '81mg' }
-      ],
-      symptoms: [
-        { id: 's1', description: 'Mild headache' },
-        { id: 's2', description: 'Slight dizziness when standing' }
-      ]
-    }
-  },
-]
+// const mockPatients: Patient[] = [
+//   {
+//     id: 'p1',
+//     name: 'John Smith',
+//     age: 72,
+//     avatar: '',
+//     healthData: {
+//       medications: [
+//         { id: 'm1', drugName: 'Lisinopril', dosage: '10mg' },
+//         { id: 'm2', drugName: 'Aspirin', dosage: '81mg' }
+//       ],
+//       symptoms: [
+//         { id: 's1', description: 'Mild headache' },
+//         { id: 's2', description: 'Slight dizziness when standing' }
+//       ]
+//     }
+//   },
+// ]
 
 const medical_record = () => {
-  const [patients, setPatients] = useState<Patient[]>(mockPatients)
-  const [selectedPatientId, setSelectedPatientId] = useState(patients[0].id)
+  // const [patients, setPatients] = useState<Patient[]>(mockPatients)
+  // const [selectedPatientId, setSelectedPatientId] = useState(patients[0].id)
   const [isEditing, setIsEditing] = useState(false)
 
-  const selectedPatient = patients.find(p => p.id === selectedPatientId)!
+  // const selectedPatient = patients.find(p => p.id === selectedPatientId)!
 
   return (
     <ScrollView className="flex-1 bg-gray-100">
@@ -50,7 +52,7 @@ const medical_record = () => {
           <Switch value={isEditing} onValueChange={setIsEditing} />
         </View>
 
-        {/* medication section */}
+        {/* medication section
         <MedicationManager
           medications={selectedPatient.healthData.medications}
           isEditing={isEditing}
@@ -63,9 +65,9 @@ const medical_record = () => {
               )
             )
           }}
-        />
+        /> */}
 
-        {/*symptom section*/}
+        {/* symptom section
         <SymptomManager
           symptoms={selectedPatient.healthData.symptoms}
           isEditing={isEditing}
@@ -78,7 +80,21 @@ const medical_record = () => {
               )
             )
           }}
-        />
+          
+        /> */}
+        
+        <View style={{}} >
+          <Text className="text-xl font-bold mb-4">Medications</Text>
+            <MedicationModalManager/>
+        </View>
+
+        <View style={{}} >
+          <Text className="text-xl font-bold mb-4">symptoms</Text>
+            <SymptomModalManager/>
+        </View>
+
+
+
       </View>
     </ScrollView>
   )
