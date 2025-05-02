@@ -6,7 +6,7 @@ export const symptomField = [
     },
     {
       key: 'severity',
-      label: 'Severity (1–5)',
+      label: 'Severity (1-5)',
       placeholder: 'Enter severity level',
     },
     {
