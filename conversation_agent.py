@@ -208,6 +208,8 @@ def check_symptom_context(state: ConversationState) -> str:
         "medication",
         "treatment",
         "condition",
+        "severity",
+        "symptoms",
     ]
 
     # Check if any symptom indicator is present in user input
@@ -253,17 +255,40 @@ def process_symptoms(state: ConversationState) -> ConversationState:
     """Process extracted symptoms and add them to the symptom state."""
     symptom_state = state["symptom_state"]
     extracted_symptoms = state["extracted_symptoms"]
+    processed_symptoms = {}
 
     # Add each extracted symptom to the symptom state
     for symptom in extracted_symptoms.keys():
+        # symptom_state.add_symptom(symptom)
+
+        # Track original symptom name before adding (it might be merged with a similar one)
+        original_symptom = symptom
+        similar_found, similar_symptom = symptom_state.find_similar_symptom(symptom)
+
+        # Add symptom - will use existing one if similar found
         symptom_state.add_symptom(symptom)
 
-    # Update state
+        # Store the proper key to use for this symptom
+        actual_symptom = similar_symptom if similar_found else symptom
+
+        # Copy any details from the extracted symptom to the processed symptom dictionary
+        # using the actual symptom name (which might be different if a similar one was found)
+        if original_symptom in extracted_symptoms:
+            processed_symptoms[actual_symptom] = extracted_symptoms[original_symptom]
+
+    # Update state with processed symptoms that match the keys in symptom_state
     return {
         **state,
         "symptom_state": symptom_state,
+        "extracted_symptoms": processed_symptoms,
         "current_action": "extract_details",
     }
+    # return {
+    #     **state,
+    #     "symptom_state": symptom_state,
+    #     "extracted_symptoms": extracted_symptoms,
+    #     "current_action": "extract_details",
+    # }
 
 
 def extract_details(state: ConversationState) -> ConversationState:

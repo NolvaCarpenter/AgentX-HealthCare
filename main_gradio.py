@@ -16,7 +16,7 @@ def format_symptom_summary(symptom_state):
     if not symptom_state or not symptom_state.primary_symptoms:
         return "No symptoms recorded yet"
 
-    summary = "## Current Symptoms\n\n"
+    summary = "## Live Symptoms Tracking\n\n"
 
     for symptom in symptom_state.primary_symptoms:
         summary += f"- **{symptom}**\n"
@@ -33,8 +33,30 @@ def format_symptom_summary(symptom_state):
                     summary += f"  - Status: Ongoing\n"
                 elif details.duration.end_date:
                     summary += f"  - Ended: {details.duration.end_date}\n"
+            if details.characteristics:
+                summary += (
+                    f"  - Characteristics: {', '.join(details.characteristics)}\n"
+                )
             if details.location:
                 summary += f"  - Location: {details.location}\n"
+            if details.quality:
+                summary += f"  - Quality: {details.quality}\n"
+            if details.frequency:
+                if details.frequency.times:
+                    summary += f"  - Frequency: {details.frequency.times} times"
+                    if details.frequency.period:
+                        summary += f" per {details.frequency.period}\n"
+                    else:
+                        summary += "\n"
+                elif details.frequency.description:
+                    summary += f"  - Frequency: {details.frequency.description}\n"
+            if details.aggravating_factors:
+                summary += f"  - Aggravating factors: {', '.join(details.aggravating_factors)}\n"
+            if details.relieving_factors:
+                summary += (
+                    f"  - Relieving factors: {', '.join(details.relieving_factors)}\n"
+                )
+
             if details.triggers:
                 summary += f"  - Triggers: {', '.join(details.triggers)}\n"
         summary += "\n"

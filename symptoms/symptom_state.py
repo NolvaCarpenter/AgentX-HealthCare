@@ -1,5 +1,6 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from pydantic import BaseModel, Field
+import re
 
 
 class Severity(BaseModel):
@@ -48,15 +49,86 @@ class SymptomState(BaseModel):
         default=None, description="The symptom currently being discussed"
     )
 
+    def find_similar_symptom(self, symptom_name: str) -> Tuple[bool, Optional[str]]:
+        """
+        Check if a similar symptom already exists in the primary symptoms list.
+
+        Args:
+            symptom_name (str): The symptom name to check against existing symptoms
+
+        Returns:
+            Tuple[bool, Optional[str]]: A tuple containing:
+                - bool: True if a similar symptom was found, False otherwise
+                - Optional[str]: The name of the similar symptom if found, None otherwise
+        """
+        if not symptom_name:
+            return False, None
+
+        # Normalize the symptom name (lowercase and strip any punctuation)
+        normalized_name = symptom_name.lower().strip()
+
+        # Direct match check
+        for existing in self.primary_symptoms:
+            if existing.lower() == normalized_name:
+                return True, existing
+
+        # Check if the symptom is a subset of an existing symptom or vice versa
+        for existing in self.primary_symptoms:
+            existing_lower = existing.lower()
+
+            # Check if one is contained within the other
+            if normalized_name in existing_lower or existing_lower in normalized_name:
+                return True, existing
+
+            # Check for descriptive modifiers like "mild fever" vs "fever"
+            # Extract the base symptom by removing common modifiers
+            modifiers = [
+                "mild",
+                "severe",
+                "slight",
+                "extreme",
+                "moderate",
+                "chronic",
+                "acute",
+            ]
+
+            # Check if normalized_name contains any modifier + existing_symptom
+            for modifier in modifiers:
+                if (
+                    f"{modifier} {existing_lower}" == normalized_name
+                    or f"{existing_lower} {modifier}" == normalized_name
+                ):
+                    return True, existing
+
+                # Also check if existing contains any modifier + normalized_name
+                if (
+                    f"{modifier} {normalized_name}" == existing_lower
+                    or f"{normalized_name} {modifier}" == existing_lower
+                ):
+                    return True, existing
+
+        return False, None
+
     def add_symptom(self, symptom_name: str):
         """Add a new symptom to the state."""
-        # Check if the symptom already exists in the primary symptoms list
-        if symptom_name not in self.primary_symptoms:
+        # Skip empty symptom names
+        if not symptom_name:
+            return
+
+        # Check for similar symptoms first
+        similar_found, similar_symptom = self.find_similar_symptom(symptom_name)
+
+        if similar_found:
+            # If a similar symptom was found, don't add a new one and use the existing one
+            symptom_name = similar_symptom
+        elif symptom_name not in self.primary_symptoms:
+            # If no similar symptom was found and this is a new symptom, add it
             self.primary_symptoms.append(symptom_name)
             self.symptom_details[symptom_name] = SymptomDetail(name=symptom_name)
-            # Set as current symptom if none is set
-            if self.current_symptom is None:
-                self.current_symptom = symptom_name
+
+        # Set as current symptom if none is set
+        if self.current_symptom is None:
+            self.current_symptom = symptom_name
 
     def update_symptom_detail(self, symptom_name: str, detail: Dict):
         """Update the details of an existing symptom."""
@@ -131,7 +203,7 @@ class SymptomState(BaseModel):
                 self.current_symptom = None
 
     def get_symptom_summary(self, symptom_name: str) -> str:
-        """Get a summary of a symptom's details."""
+        """Get a summary of a symptom's details in a human-readable format."""
         if symptom_name not in self.primary_symptoms:
             raise ValueError(f"Symptom '{symptom_name}' not found in primary symptoms.")
 
@@ -139,55 +211,98 @@ class SymptomState(BaseModel):
         if not detail:
             return f"Symptom: {symptom_name} (No details available)"
 
+        # Use a cleaner format with a title and proper indentation
         summary = [f"Symptom: {symptom_name}"]
 
+        # Format severity with a visual indicator
         if detail.severity and detail.severity.level is not None:
-            summary.append(f"Severity: {detail.severity.level}/10")
+            severity_level = detail.severity.level
+            severity_bar = "■" * severity_level + "□" * (10 - severity_level)
+            summary.append(f"Severity: {severity_level}/10 [{severity_bar}]")
             if detail.severity.description:
-                summary.append(f"Description: {detail.severity.description}")
+                summary.append(f"  Description: {detail.severity.description}")
 
+        # Format duration in a more structured way
         if detail.duration:
-            duration_info = []
+            duration_parts = []
             if detail.duration.start_date:
-                duration_info.append(f"Started: {detail.duration.start_date}")
+                # Make the date format more readable
+                date = (
+                    detail.duration.start_date.split("T")[0]
+                    if "T" in detail.duration.start_date
+                    else detail.duration.start_date
+                )
+                duration_parts.append(f"Started: {date}")
+
             if detail.duration.is_ongoing is not None:
-                status = "Ongoing" if detail.duration.is_ongoing else "Resolved"
-                duration_info.append(f"Status: {status}")
+                status = "✓ Ongoing" if detail.duration.is_ongoing else "✗ Resolved"
+                duration_parts.append(f"Status: {status}")
+
             if detail.duration.end_date and not detail.duration.is_ongoing:
-                duration_info.append(f"Ended: {detail.duration.end_date}")
-            if duration_info:
-                summary.append("Duration: " + ", ".join(duration_info))
+                end_date = (
+                    detail.duration.end_date.split("T")[0]
+                    if "T" in detail.duration.end_date
+                    else detail.duration.end_date
+                )
+                duration_parts.append(f"Ended: {end_date}")
 
+            if duration_parts:
+                summary.append("Duration:")
+                for part in duration_parts:
+                    summary.append(f"  {part}")
+
+        # Group similar categories together for better organization
+        characteristic_info = []
         if detail.characteristics:
-            summary.append(f"Characteristics: {', '.join(detail.characteristics)}")
-
-        if detail.location:
-            summary.append(f"Location: {detail.location}")
-
+            characteristic_info.append(
+                f"• Characteristics: {', '.join(detail.characteristics)}"
+            )
         if detail.quality:
-            summary.append(f"Quality: {detail.quality}")
-
-        if detail.frequency:
-            summary.append(f"Frequency: {detail.frequency}")
-
+            characteristic_info.append(f"• Quality: {detail.quality}")
         if detail.intensity:
-            summary.append(f"Intensity: {detail.intensity}")
+            characteristic_info.append(f"• Intensity: {detail.intensity}")
 
+        if characteristic_info:
+            summary.append("Clinical Characteristics:")
+            summary.extend([f"  {info}" for info in characteristic_info])
+
+        # Group location and timing together
+        location_timing = []
+        if detail.location:
+            location_timing.append(f"• Location: {detail.location}")
+        if detail.timing:
+            location_timing.append(f"• Timing: {detail.timing}")
+        if detail.frequency:
+            location_timing.append(f"• Frequency: {detail.frequency}")
+
+        if location_timing:
+            summary.append("Location & Pattern:")
+            summary.extend([f"  {info}" for info in location_timing])
+
+        # Group factors together with clearer labeling
+        factors = []
         if detail.triggers:
-            summary.append(f"Triggers: {', '.join(detail.triggers)}")
-
+            factors.append(f"• Triggers: {', '.join(detail.triggers)}")
         if detail.aggravating_factors:
-            summary.append(
-                f"Aggravating factors: {', '.join(detail.aggravating_factors)}"
+            factors.append(
+                f"• Aggravating factors: {', '.join(detail.aggravating_factors)}"
             )
-
         if detail.relieving_factors:
-            summary.append(f"Relieving factors: {', '.join(detail.relieving_factors)}")
-
-        if detail.associated_symptoms:
-            summary.append(
-                f"Associated symptoms: {', '.join(detail.associated_symptoms)}"
+            factors.append(
+                f"• Relieving factors: {', '.join(detail.relieving_factors)}"
             )
+
+        if factors:
+            summary.append("Contributing Factors:")
+            summary.extend([f"  {factor}" for factor in factors])
+
+        # Associated information
+        if detail.associated_symptoms:
+            summary.append("Associated Symptoms:")
+            summary.append(f"  • {', '.join(detail.associated_symptoms)}")
+
+        # Add a separator line at the end for multiple symptom summaries
+        summary.append("─" * 40)
 
         return "\n".join(summary)
 
