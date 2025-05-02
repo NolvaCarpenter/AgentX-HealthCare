@@ -28,7 +28,10 @@ def main():
 
     # Get initial greeting
     response, state = process_user_input("", state)
-    print(f"Assistant: {response}\n")
+    if response.startswith("Assistant:"):
+        print(f"{response}\n")
+    else:
+        print(f"Assistant: {response}\n")
 
     # Main conversation loop
     while True:
@@ -43,8 +46,11 @@ def main():
         # Process user input
         response, state = process_user_input(user_input, state)
 
-        # Print response
-        print(f"\nAssistant: {response}\n")
+        # Print response (checking if response already starts with "Assistant: ")
+        if response.startswith("Assistant:"):
+            print(f"\n{response}\n")
+        else:
+            print(f"\nAssistant: {response}\n")
 
 
 if __name__ == "__main__":

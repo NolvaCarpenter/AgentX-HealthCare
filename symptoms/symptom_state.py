@@ -118,9 +118,17 @@ class SymptomState(BaseModel):
             self.current_symptom = self.primary_symptoms[0]
             return
 
-        current_index = self.primary_symptoms.index(self.current_symptom)
-        next_index = (current_index + 1) % len(self.primary_symptoms)
-        self.current_symptom = self.primary_symptoms[next_index]
+        # Safety check: make sure current_symptom is in primary_symptoms
+        try:
+            current_index = self.primary_symptoms.index(self.current_symptom)
+            next_index = (current_index + 1) % len(self.primary_symptoms)
+            self.current_symptom = self.primary_symptoms[next_index]
+        except ValueError:
+            # If current_symptom is not in primary_symptoms, reset to first symptom
+            if self.primary_symptoms:
+                self.current_symptom = self.primary_symptoms[0]
+            else:
+                self.current_symptom = None
 
     def get_symptom_summary(self, symptom_name: str) -> str:
         """Get a summary of a symptom's details."""

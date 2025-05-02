@@ -19,14 +19,13 @@ from medications.handle_upload import validate_medication_image, get_available_s
 # Define the state schema for the conversation graph
 class ConversationState(TypedDict):
     user_id: str
-    symptom_state: SymptomState
-    chat_history: List[Dict[str, str]]
     user_input: str
     ai_response: str
     current_action: str
-    extracted_symptoms: List[str]
-    extracted_details: Dict[str, Any]
-    missing_field: Optional[str]
+    chat_history: List[Dict[str, str]]
+    symptom_state: SymptomState
+    extracted_symptoms: Dict[str, SymptomDetail]
+    missing_fields: List[str]
     filename: str
     medication_state: MedicationProcessState
     extracted_medications: Dict[str, MedicationLabel]
@@ -39,20 +38,22 @@ llm = ChatOpenAI(model_name="gpt-4o")
 symptom_extractor = SymptomExtractor()
 detail_extractor = SymptomDetailExtractor()
 
+# Configuration constants
+MAX_MISSING_FIELDS_TO_ASK = 2  # Maximum number of missing fields to ask about at once
+
 
 # Define the nodes for the conversation graph
 def initialize_state() -> ConversationState:
     """Initialize the conversation state."""
     return {
         "user_id": "default_user",
-        "symptom_state": SymptomState(),
-        "chat_history": [],
         "user_input": "",
         "ai_response": "",
         "current_action": "chat",
-        "extracted_symptoms": [],
-        "extracted_details": {},
-        "missing_field": None,
+        "chat_history": [],
+        "symptom_state": SymptomState(),
+        "extracted_symptoms": {},
+        "missing_fields": [],
         "filename": "",
         "medication_state": MedicationProcessState(),
         "extracted_medications": {},
@@ -233,21 +234,19 @@ def extract_symptoms(state: ConversationState) -> ConversationState:
         return state
 
     # Extract symptoms
-    extracted_symptoms = symptom_extractor.extract_symptoms(user_input)
+    symptom_list = symptom_extractor.extract_symptoms(user_input)
+
+    # Convert list to dictionary with empty details
+    extracted_symptoms = {}
+    for symptom in symptom_list:
+        extracted_symptoms[symptom] = {}
 
     # Update state
-    if extracted_symptoms:
-        return {
-            **state,
-            "extracted_symptoms": extracted_symptoms,
-            "current_action": "process_symptoms",
-        }
-    else:
-        return {
-            **state,
-            "extracted_symptoms": [],
-            "current_action": "generate_response",  # If no symptoms found, go directly to generate_response
-        }
+    return {
+        **state,
+        "extracted_symptoms": extracted_symptoms,
+        "current_action": "process_symptoms",
+    }
 
 
 def process_symptoms(state: ConversationState) -> ConversationState:
@@ -256,7 +255,7 @@ def process_symptoms(state: ConversationState) -> ConversationState:
     extracted_symptoms = state["extracted_symptoms"]
 
     # Add each extracted symptom to the symptom state
-    for symptom in extracted_symptoms:
+    for symptom in extracted_symptoms.keys():
         symptom_state.add_symptom(symptom)
 
     # Update state
@@ -271,68 +270,77 @@ def extract_details(state: ConversationState) -> ConversationState:
     """Extract details for the current symptom."""
     symptom_state = state["symptom_state"]
     user_input = state["user_input"]
+    extracted_symptoms = state["extracted_symptoms"]
+
+    # Get missing fields to extract from state
+    missing_fields = state.get("missing_fields", [])
 
     # If no current symptom, select one
     if not symptom_state.current_symptom and symptom_state.primary_symptoms:
         symptom_state.current_symptom = symptom_state.primary_symptoms[0]
 
-    # If no symptoms, skip detail extraction
-    if not symptom_state.current_symptom:
+    # If no symptoms or current_symptom is None, skip detail extraction
+    if not symptom_state.primary_symptoms or not symptom_state.current_symptom:
         return {**state, "current_action": "generate_response"}
 
     current_symptom = symptom_state.current_symptom
 
-    # Get the next missing field for the current symptom
-    missing_field = symptom_state.get_next_missing_field(current_symptom)
+    # Make sure current symptom exists in extracted_symptoms
+    if current_symptom not in extracted_symptoms:
+        extracted_symptoms[current_symptom] = {}
 
-    # Extract details based on the missing field
-    extracted_details = {}
-
-    if missing_field == "severity":
-        severity_data = detail_extractor.extract_severity(current_symptom, user_input)
-        if severity_data["level"] is not None:
-            # Create a proper Severity object instead of using the dictionary directly
-            extracted_details["severity"] = Severity(
-                level=severity_data["level"], description=severity_data["description"]
+    # Extract details for each missing field from the user's response
+    for missing_field in missing_fields:
+        # Extract details based on the missing field
+        if missing_field == "severity":
+            severity_data = detail_extractor.extract_severity(
+                current_symptom, user_input
             )
+            if severity_data["level"] is not None:
+                # Create a proper Severity object instead of using the dictionary directly
+                extracted_symptoms[current_symptom]["severity"] = Severity(
+                    level=severity_data["level"],
+                    description=severity_data["description"],
+                )
 
-    elif missing_field in ["start_date", "is_ongoing"]:
-        duration_data = detail_extractor.extract_duration(current_symptom, user_input)
-        if any(v is not None for v in duration_data.values()):
-            # Create a proper Duration object
-            extracted_details["duration"] = Duration(
-                start_date=duration_data["start_date"],
-                end_date=duration_data["end_date"],
-                is_ongoing=duration_data["is_ongoing"],
+        elif missing_field in ["start_date", "is_ongoing"]:
+            duration_data = detail_extractor.extract_duration(
+                current_symptom, user_input
             )
+            if any(v is not None for v in duration_data.values()):
+                # Create a proper Duration object
+                extracted_symptoms[current_symptom]["duration"] = Duration(
+                    start_date=duration_data["start_date"],
+                    end_date=duration_data["end_date"],
+                    is_ongoing=duration_data["is_ongoing"],
+                )
 
-    elif missing_field in [
-        "characteristics",
-        "aggravating_factors",
-        "relieving_factors",
-        "triggers",
-        "associated_symptoms",
-    ]:
-        list_data = detail_extractor.extract_list_detail(
-            current_symptom, missing_field, user_input
-        )
-        if list_data:
-            extracted_details[missing_field] = list_data
+        elif missing_field in [
+            "characteristics",
+            "aggravating_factors",
+            "relieving_factors",
+            "triggers",
+            "associated_symptoms",
+        ]:
+            list_data = detail_extractor.extract_list_detail(
+                current_symptom, missing_field, user_input
+            )
+            if list_data:
+                extracted_symptoms[current_symptom][missing_field] = list_data
 
-    else:
-        # For other string fields
-        detail_value = detail_extractor.extract_detail(
-            current_symptom, missing_field, user_input
-        )
-        if detail_value:
-            extracted_details[missing_field] = detail_value
-
-    # Update state
+        else:
+            # For other string fields
+            detail_value = detail_extractor.extract_detail(
+                current_symptom, missing_field, user_input
+            )
+            if detail_value:
+                extracted_symptoms[current_symptom][
+                    missing_field
+                ] = detail_value  # Update state
     return {
         **state,
         "symptom_state": symptom_state,
-        "extracted_details": extracted_details,
-        "missing_field": missing_field,
+        "extracted_symptoms": extracted_symptoms,
         "current_action": "update_symptom_details",
     }
 
@@ -340,20 +348,24 @@ def extract_details(state: ConversationState) -> ConversationState:
 def update_symptom_details(state: ConversationState) -> ConversationState:
     """Update symptom details in the symptom state."""
     symptom_state = state["symptom_state"]
-    extracted_details = state["extracted_details"]
+    extracted_symptoms = state["extracted_symptoms"]
 
-    # If no current symptom or no extracted details, skip update
-    if not symptom_state.current_symptom or not extracted_details:
+    # If no current symptom, skip update
+    if not symptom_state.current_symptom:
         return {**state, "current_action": "determine_next_action"}
 
     current_symptom = symptom_state.current_symptom
 
-    # Update symptom details
-    try:
-        symptom_state.update_symptom_detail(current_symptom, extracted_details)
-    except ValueError:
-        # If symptom not found, skip update
-        pass
+    # Check if there are details for the current symptom
+    if current_symptom in extracted_symptoms and extracted_symptoms[current_symptom]:
+        # Update symptom details
+        try:
+            symptom_state.update_symptom_detail(
+                current_symptom, extracted_symptoms[current_symptom]
+            )
+        except ValueError:
+            # If symptom not found, skip update
+            pass
 
     # Update state
     return {
@@ -381,14 +393,19 @@ def determine_next_action(state: ConversationState) -> ConversationState:
     current_symptom = symptom_state.current_symptom
 
     # Check if there are missing fields for the current symptom
-    missing_fields = symptom_state.missing_fields(current_symptom)
+    try:
+        missing_fields = symptom_state.missing_fields(current_symptom)
+    except ValueError:
+        # If symptom not found in primary_symptoms
+        return {**state, "current_action": "generate_response"}
 
     if missing_fields:
-        # There are missing fields, ask about the next one
+        # There are missing fields, ask about the top MAX_MISSING_FIELDS_TO_ASK fields
+        top_missing_fields = missing_fields[:MAX_MISSING_FIELDS_TO_ASK]
         return {
             **state,
             "symptom_state": symptom_state,
-            "missing_field": missing_fields[0],
+            "missing_fields": top_missing_fields,
             "current_action": "generate_question",
         }
     else:
@@ -404,7 +421,7 @@ def determine_next_action(state: ConversationState) -> ConversationState:
                 return {
                     **state,
                     "symptom_state": symptom_state,
-                    "missing_field": new_missing_fields[0],
+                    "missing_fields": new_missing_fields,
                     "current_action": "generate_question",
                 }
 
@@ -417,30 +434,36 @@ def determine_next_action(state: ConversationState) -> ConversationState:
 
 
 def generate_question(state: ConversationState) -> ConversationState:
-    """Generate a question about a missing field."""
+    """Generate a question about top N missing fields."""
     symptom_state = state["symptom_state"]
-    missing_field = state["missing_field"]
+    missing_fields = state.get("missing_fields", [])
 
-    if not symptom_state.current_symptom or not missing_field:
+    # Check both if current_symptom is None or empty, and if missing_fields is empty
+    if (
+        not symptom_state.current_symptom
+        or symptom_state.current_symptom is None
+        or not missing_fields
+    ):
         return {**state, "current_action": "generate_response"}
 
     current_symptom = symptom_state.current_symptom
 
+    # Format the missing fields as a comma-separated list
+    missing_fields_str = ", ".join(missing_fields)
+
     # Define the question prompt
     question_prompt = ChatPromptTemplate.from_template(
         """You are a medical assistant conducting a symptom assessment. 
-        You need to ask about the {missing_field} for the symptom "{symptom}".
+        You need to ask about the {missing_fields_str} for the symptom "{symptom}".
         
         Ask a clear, specific question in a natural, empathetic tone.
-        Keep your question concise and focused only on the {missing_field}.
-
-        Asks if any medications have been taken related to "{symptom}" recently.
-        Then ask to take a photo and upload medication labels.
+        Structure your question concise and focused only on {missing_fields_str}.
+        So that the user can understand what information you need.
         
         Previous conversation:
         {chat_history}
         
-        Your question about the {missing_field} for {symptom}:"""
+        Your question about the {missing_fields_str} for {symptom}:"""
     )
 
     # Format chat history for the prompt
@@ -451,10 +474,10 @@ def generate_question(state: ConversationState) -> ConversationState:
         ]
     )
 
-    # Generate the question
+    # Generate the questions
     response = llm.invoke(
         question_prompt.format(
-            missing_field=missing_field,
+            missing_fields_str=missing_fields_str,
             symptom=current_symptom,
             chat_history=chat_history_text,
         )
@@ -473,13 +496,17 @@ def generate_response(state: ConversationState) -> ConversationState:
     if not state["user_input"]:
         return {**state, "current_action": "update_history"}
 
-    symptom_state = state["symptom_state"]
+    # Get relevant state components
+    extracted_symptoms = state.get("extracted_symptoms", {})
+    extracted_medications = state.get("extracted_medications", {})
 
     # Define the response prompt
     response_prompt = ChatPromptTemplate.from_template(
         """You are a medical assistant conducting a symptom assessment.
         
-        Current symptoms being tracked: {symptoms}I
+        Current symptoms being tracked: {symptoms}
+        
+        Medications mentioned or uploaded: {medications}
         
         Previous conversation:
         {chat_history}
@@ -487,7 +514,14 @@ def generate_response(state: ConversationState) -> ConversationState:
         User's latest message: {user_input}
         
         Respond in a natural, empathetic tone. If the user has mentioned symptoms, acknowledge them.
-        If no symptoms have been mentioned yet, ask the user what symptoms they're experiencing.
+        If symptoms and medications are both present, discuss potential connections between them.
+        If medications are present without symptoms, ask if they're taking the medication for specific symptoms.
+        If no symptoms or medications have been mentioned yet, ask the user what symptoms they're experiencing.
+        
+        After gathering symptom details and medications have not been mentioned yet:
+        - Suggest they upload a medication label by saying "You can upload a photo of your medication label"
+        - Or ask "Could you tell me about any medications you're currently taking?"
+        
         Keep your response concise and focused.
         
         Your response:"""
@@ -495,9 +529,12 @@ def generate_response(state: ConversationState) -> ConversationState:
 
     # Format symptoms and chat history for the prompt
     symptoms_text = (
-        ", ".join(symptom_state.primary_symptoms)
-        if symptom_state.primary_symptoms
-        else "None"
+        ", ".join(extracted_symptoms.keys()) if extracted_symptoms else "None"
+    )
+
+    # Format medication information for the prompt
+    medication_text = (
+        ", ".join(extracted_medications.keys()) if extracted_medications else "None"
     )
 
     chat_history_text = "\n".join(
@@ -511,6 +548,7 @@ def generate_response(state: ConversationState) -> ConversationState:
     response = llm.invoke(
         response_prompt.format(
             symptoms=symptoms_text,
+            medications=medication_text,
             chat_history=chat_history_text,
             user_input=state["user_input"],
         )

@@ -15,7 +15,8 @@ class SymptomExtractor:
         # Prompt for extracting symptoms
         self.extract_symptoms_prompt = ChatPromptTemplate.from_template(
             """You are a medical assistant that identifies symptoms mentioned in patient statements.
-            Extract all symptoms mentioned in the following statement based solely on the facts provided, without making any assumptions. Return only the symptom names as a comma-separated list.
+            Extract all symptoms mentioned in the following statement based solely on the facts provided, without making any assumptions. 
+            Return only the symptom names and the primary symptom in the first of a comma-separated list.
             If no symptoms are mentioned, return "None". Use factual description 
             
             Patient statement: {user_input}
