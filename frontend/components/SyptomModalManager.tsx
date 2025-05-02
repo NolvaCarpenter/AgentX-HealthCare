@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { View, Text, ScrollView, Button, Modal, TextInput, TouchableOpacity } from "react-native";
-import uuid from 'react-native-uuid';
+import { v4 as uuidv4 } from 'uuid';
 import { symptomDetailFields, type symptom_details } from "@/types/patient"; 
 import { SymptomFields, type Symptom } from "@/types/patient";
 
@@ -29,7 +29,7 @@ export const createEmptyForm = (): FullSymptom => {
     primary_symptoms: [],
     secondary_symptoms: [],
     symptom_details: {},
-    user_id: uuid.v4() as string,
+    user_id: uuidv4() as string,
     recorded_datetime: new Date().toISOString()
   };
 };

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { View, Text, ScrollView, Button, Modal, TextInput, TouchableOpacity } from "react-native";
-import uuid from 'react-native-uuid';
+import { v4 as uuidv4 } from 'uuid';
 import { Medication, medicationField } from "@/types/patient"; // 경로는 프로젝트 구조에 맞게 조정
 
 type FullMedication = Medication & {
@@ -14,7 +14,7 @@ const createEmptyForm = (): FullMedication => {
   for (const { key } of medicationField) base[key] = "";
   return {
     ...base,
-    user_id: uuid.v4() as string,
+    user_id: uuidv4() as string,
     recorded_datetime: new Date().toISOString(),
   };
 };
@@ -34,6 +34,7 @@ export default function MedicationModalManager() {
     setShowModal(true);
   };
 
+
   const handleSave = () => {
     setMedications(prev => [...prev, formData]);
     setShowModal(false);
@@ -43,7 +44,16 @@ export default function MedicationModalManager() {
   return (
     <View className="flex-1 bg-gray-100">
       <ScrollView className="p-4">
-        <View>
+       <View>
+       {medications.map((med, index) => (
+          <TouchableOpacity key={med.user_id} onPress={() => openEditModal(med)}>
+            className="bg-blue-500 p-4 rounded-xl mt-6"
+            
+          
+            <Text className="text-center text-white font-bold">Add Medication</Text>
+          </TouchableOpacity>
+          ))}
+
           {medications.map((med, index) => (
             <TouchableOpacity key={med.user_id} onPress={() => openEditModal(med)}>
               <View className="p-4 mb-2 bg-white rounded-xl shadow">
