@@ -15,23 +15,23 @@ export const usePatientStore = create<PatientState>((set) => ({
   // patient: null,
   patient: {
     id: 'demo-p1',
-    name: '홍길동',
+    name: 'hong',
     age: 75,
     medications: [
       { id: 'm1', drug_name: 'Lisinopril', dosage: '10mg' },
       { id: 'm2', drug_name: 'Aspirin', dosage: '81mg' }
     ],
     symptoms: [
-      { id: 's1', name: '두통', severity: 2 },
-      { id: 's2', name: '기립 시 어지러움', severity: 1 }
+      { id: 's1', name: 'headache', severity: 2 },
+      { id: 's2', name: 'hypotension', severity: 1 }
     ],
     past_medications: [
-      { id: 'pm1', drug_name: 'Metformin', dosage: '500mg', pharmacy_name: '건강약국' },
+      { id: 'pm1', drug_name: 'Metformin', dosage: '500mg', pharmacy_name: 'Health Pharmacy' },
       { id: 'pm2', drug_name: 'Atorvastatin', dosage: '20mg' }
     ],
     past_symptoms: [
-      { id: 'ps1', name: '요통', severity: 3, onset_description: '작년 겨울에 한 달간 지속됨' },
-      { id: 'ps2', name: '기침', onset_description: '감기 증상과 함께 발생' }
+      { id: 'ps1', name: 'lower back pain', severity: 3, onset_description: 'Lasted for a month during last winter' },
+      { id: 'ps2', name: 'cough', onset_description: 'Occurred along with cold symptoms' }
     ]
   },
 
