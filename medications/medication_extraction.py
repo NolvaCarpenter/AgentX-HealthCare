@@ -16,6 +16,10 @@ from medications.medication_state import MedicationLabel, MedicationProcessState
 
 from langchain_core.tools import ToolException
 import pytesseract
+
+# Set full path to the tesseract executable
+# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
 from PIL import Image
 import sqlite3
 from datetime import datetime
