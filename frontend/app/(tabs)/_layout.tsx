@@ -12,9 +12,9 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="medical_record"
+        name="healthTracker"
         options={{
-          title: 'record',
+          title: 'healthTracker',
           tabBarIcon: ({ color, size }) => <Stethoscope size={size} color={color} />,
         }}
       />
