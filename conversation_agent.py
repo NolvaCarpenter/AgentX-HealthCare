@@ -7,6 +7,8 @@ from typing import Dict, List, Any, TypedDict, Optional, Tuple, Literal
 import os
 import tempfile
 import webbrowser
+import uuid
+import datetime
 
 from symptoms.symptom_state import SymptomState, SymptomDetail, Severity, Duration
 from symptoms.symptom_extraction import SymptomExtractor, SymptomDetailExtractor
@@ -15,10 +17,13 @@ from medications.medication_state import build_medication_workflow
 from medications.medication_extraction import MedicationProcessState, MedicationLabel
 from medications.handle_upload import validate_medication_image, get_available_samples
 
+from conversation_thread import create_new_thread, save_message
+
 
 # Define the state schema for the conversation graph
 class ConversationState(TypedDict):
     user_id: str
+    thread_id: str  # Unique identifier for each conversation thread
     user_input: str
     ai_response: str
     current_action: str
@@ -40,13 +45,38 @@ detail_extractor = SymptomDetailExtractor()
 
 # Configuration constants
 MAX_MISSING_FIELDS_TO_ASK = 2  # Maximum number of missing fields to ask about at once
+MAX_CHAT_HISTORY_LENGTH = 5  # Maximum number of chat history messages to keep
 
 
 # Define the nodes for the conversation graph
-def initialize_state() -> ConversationState:
-    """Initialize the conversation state."""
+def initialize_state(configurable=None) -> ConversationState:
+    """Initialize the conversation state.
+
+    Args:
+        configurable: Optional configuration object provided by LangGraph
+    """
+    # Check if a thread_id is provided in various sources
+    thread_id = None
+
+    # Option 1: Check the configurable parameter from LangGraph
+    if configurable and isinstance(configurable, dict) and "thread_id" in configurable:
+        thread_id = configurable.get("thread_id")
+        print(f"[INFO] Using thread_id from LangGraph configurable: {thread_id}")
+
+    # Option 2: Check the module-level config
+    elif "configurable" in config and "thread_id" in config["configurable"]:
+        thread_id = config["configurable"]["thread_id"]
+        print(f"[INFO] Using thread_id from module config: {thread_id}")
+
+    # Option 3: Generate a new thread ID if none was provided
+    if not thread_id:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        thread_id = f"{timestamp}-{str(uuid.uuid4())[:8]}"
+        print(f"[INFO] Generated new thread_id: {thread_id}")
+
     return {
         "user_id": "default_user",
+        "thread_id": thread_id,
         "user_input": "",
         "ai_response": "",
         "current_action": "chat",
@@ -495,7 +525,9 @@ def generate_question(state: ConversationState) -> ConversationState:
     chat_history_text = "\n".join(
         [
             f"{msg['role'].capitalize()}: {msg['content']}"
-            for msg in state["chat_history"][-5:]  # Include only the last 5 messages
+            for msg in state["chat_history"][
+                -MAX_CHAT_HISTORY_LENGTH:
+            ]  # Include only the last 5 messages
         ]
     )
 
@@ -565,7 +597,9 @@ def generate_response(state: ConversationState) -> ConversationState:
     chat_history_text = "\n".join(
         [
             f"{msg['role'].capitalize()}: {msg['content']}"
-            for msg in state["chat_history"][-5:]  # Include only the last 5 messages
+            for msg in state["chat_history"][
+                -MAX_CHAT_HISTORY_LENGTH:
+            ]  # Include only the last 5 messages
         ]
     )
 
@@ -789,31 +823,85 @@ def display_workflow():
     return mermaid_code
 
 
-# Set configuration
-config = {"configurable": {"thread_id": "1", "user_id": "1"}}
+# Set configuration with default values
+config = {"configurable": {"user_id": "default_user", "thread_id": None}}
 
 
 # Function to process user input
 def process_user_input(
-    user_input: str, state: Optional[ConversationState] = None
+    user_input: str,
+    state: Optional[ConversationState] = None,
+    thread_id: Optional[str] = None,
 ) -> Tuple[str, ConversationState]:
     """Process user input and return the AI response and updated state."""
+
     # Initialize state if not provided
     if state is None:
-        state = initialize_state()
-        # Run the graph to get the greeting
-        state = conversation_graph.invoke(state)
-        return state["ai_response"], state
+        # Use thread_id from parameter, or from LangGraph config, or create a new one
+        if thread_id is None:
+            # Check if a thread_id was provided in the LangGraph config
+            langgraph_thread_id = config["configurable"].get("thread_id")
+            if langgraph_thread_id:
+                thread_id = langgraph_thread_id
+            else:
+                thread_id = create_new_thread(config["configurable"]["user_id"])
+
+        # Create LangGraph configurable with the thread_id
+        graph_configurable = {
+            "thread_id": thread_id,
+            "user_id": config["configurable"]["user_id"],
+        }
+
+        # Initialize state with the configurable parameter
+        state = initialize_state(configurable=graph_configurable)
+
+        # Ensure thread_id is set in the state
+        state["thread_id"] = thread_id
+
+        # Also update the module-level config
+        config["configurable"]["thread_id"] = thread_id
+
+        # Run the graph to get the greeting with the configurable
+        graph_config = {"configurable": graph_configurable}
+        state = conversation_graph.invoke(state, graph_config)
+
+        # Save the greeting message to the thread
+        if state["ai_response"]:
+            save_message(thread_id, "assistant", state["ai_response"])
+
+        return (
+            state["ai_response"],
+            state,
+        )  # Use the thread_id from the state if not explicitly provided
+    if thread_id is None and "thread_id" in state:
+        thread_id = state["thread_id"]
+
+    # Save user message to the thread
+    if thread_id:
+        save_message(thread_id, "user", user_input)
 
     # Update state with user input
     state = {
         **state,
         "user_input": user_input,
+        "thread_id": thread_id,  # Make sure thread_id is in the state
         "current_action": "check_symptom_context",  # Set to our new conditional check
+    }  # Create the configurable object for LangGraph
+    graph_configurable = {
+        "thread_id": thread_id,
+        "user_id": config["configurable"]["user_id"],
     }
 
-    # Run the graph
-    state = conversation_graph.invoke(state)
+    # Update module-level config for consistency
+    config["configurable"]["thread_id"] = thread_id
+
+    # Run the graph with the thread_id in the config
+    graph_config = {"configurable": graph_configurable}
+    state = conversation_graph.invoke(state, graph_config)
+
+    # Save assistant's response to the thread
+    if thread_id and state["ai_response"]:
+        save_message(thread_id, "assistant", state["ai_response"])
 
     # Return the AI response and updated state
     return state["ai_response"], state
@@ -822,3 +910,27 @@ def process_user_input(
 if __name__ == "__main__":
     print("\nDisplaying conversation workflow diagram...")
     display_workflow()
+
+    # Example of direct LangGraph thread_id usage:
+    def example_langgraph_thread_usage():
+        """Example showing how to use thread_id directly with LangGraph"""
+        print("\nExample of direct LangGraph thread usage:")
+
+        # Create initial state
+        state = initialize_state()
+        state["user_input"] = "I have a headache and fever"
+
+        # Set up configuration with specific thread_id
+        langgraph_config = {"configurable": {"thread_id": "example-thread-123"}}
+
+        # Invoke graph with config
+        output = conversation_graph.invoke(state, langgraph_config)
+
+        # Access results
+        print(f"Thread ID used: {output['thread_id']}")
+        print(f"AI Response: {output['ai_response']}")
+
+        return output
+
+    # Uncomment to run the example
+    # example_langgraph_thread_usage()

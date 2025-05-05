@@ -17,6 +17,36 @@ audio_dir = "data/patient_conversations"
 db_path = "baymax_agentx_health.db"
 
 
+def process_voice_input():
+    """Process audio files to extract symptoms and generate summary."""
+    patient_id = input("Enter Patient ID (e.g., default: CAR0001): ").strip()
+    patient_id = "CAR0001" if not patient_id else patient_id
+    files = list_audio_files_for_patient(patient_id)
+
+    if not files:
+        print(f"❌ No audio files found for patient ID {patient_id}.")
+        return
+
+    print("\n🎧 Available Audio Files:")
+    for i, f in enumerate(files, 1):
+        print(f"{i}. {f}")
+    try:
+        choice = int(input("Select file number to process: ").strip())
+        selected_file = files[choice - 1]
+    except (ValueError, IndexError):
+        print("❌ Invalid selection.")
+        return
+
+    print(f"🔊 Processing {selected_file}...")
+    audio_path = os.path.join("data", "patient_conversations", selected_file)
+    results = process_audio_to_symptoms_and_summary(audio_path, patient_id)
+
+    store_results_in_sqlite(results)
+
+    print("\n📄 Summary:\n", results["physician_summary"])
+    print("\n🩺 Structured Symptoms:\n", results["symptoms_json"])
+
+
 def transcribe_audio_openai(audio_file_path):
     with open(audio_file_path, "rb") as audio_file:
         response = client.audio.transcriptions.create(
