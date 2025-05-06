@@ -17,7 +17,12 @@ from medications.medication_state import build_medication_workflow
 from medications.medication_extraction import MedicationProcessState, MedicationLabel
 from medications.handle_upload import validate_medication_image, get_available_samples
 
-from conversation_thread import create_new_thread, save_message
+from conversation_thread import (
+    create_new_thread,
+    save_message,
+    save_symptom_data,
+    save_medication_data,
+)
 
 
 # Define the state schema for the conversation graph
@@ -982,19 +987,39 @@ def process_user_input(
         "current_action": "check_symptom_context",  # Set to our new conditional check
     }
 
-    # Create the configurable object for LangGraph
+    # Run the graph with the thread_id in the config
     graph_configurable = {
         "thread_id": state["thread_id"],
         "user_id": state["user_id"] or username,
     }
-
-    # Run the graph with the thread_id in the config
     graph_config = {"configurable": graph_configurable}
     state = conversation_graph.invoke(state, graph_config)
 
     # Save assistant's response to the thread
     if thread_id and state["ai_response"]:
         save_message(thread_id, "assistant", state["ai_response"])
+
+    # Save symptom data if there are any symptoms
+    if (
+        thread_id
+        and "symptom_state" in state
+        and state["symptom_state"].primary_symptoms
+    ):
+        # Prepare symptom data for serialization
+        symptom_data = state["symptom_state"].model_dump()
+        save_symptom_data(thread_id, symptom_data)
+
+    # Save medication data if there are any medications
+    if (
+        thread_id
+        and "extracted_medications" in state
+        and state["extracted_medications"]
+    ):
+        # Convert medication data to serializable format
+        medication_data = {}
+        for drug_name, medication in state["extracted_medications"].items():
+            medication_data[drug_name] = medication.model_dump()
+        save_medication_data(thread_id, medication_data)
 
     # Return the AI response and updated state
     return state["ai_response"], state

@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 
-import os
-import sys
+import os, sys, shutil
 import gradio as gr
-from datetime import datetime
 
 # Add the current directory to the path to import our modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -13,16 +11,18 @@ from symptoms.symptom_state import SymptomState
 from conversation_thread import (
     get_active_threads,
     create_new_thread,
-    get_thread_history,
     get_thread_summary,
 )
 from utils.gradio_styles import gradio_css
 from medications.handle_upload import validate_medication_image
 
 
-def format_symptom_summary(symptom_state, state=None):
+def format_symptom_summary(state):
     """Format the symptom state into a markdown summary."""
     summary = "## Symptom Tracking\n\n"
+
+    # Get symptom_state from state
+    symptom_state = state.get("symptom_state") if state else None
 
     # Handle symptoms summary
     if (
@@ -122,6 +122,15 @@ def start_conversation(name):
 
 def switch_thread(selected_thread_id, current_username):
     """Switch to a different conversation thread."""
+    from conversation_thread import (
+        get_thread_history,
+        get_thread_summary,
+        get_symptom_data,
+        get_medication_data,
+    )
+    from symptoms.symptom_state import SymptomState
+    from medications.medication_state import MedicationLabel
+
     thread_messages = get_thread_history(selected_thread_id)
     thread_summary = get_thread_summary(selected_thread_id)
 
@@ -133,18 +142,41 @@ def switch_thread(selected_thread_id, current_username):
         if role == "user":
             chatbot_history.append({"role": "user", "content": content})
         elif role == "assistant":
-            chatbot_history.append(
-                {"role": "assistant", "content": content}
-            )  # Initialize state from thread history with the proper username
-    new_state = initialize_state(username=current_username)
-    if thread_messages:
-        for message in thread_messages:
-            if "symptom_state" in message:
-                new_state = message["symptom_state"]
-            if "extracted_medications" in message:
-                new_state["extracted_medications"] = message["extracted_medications"]
+            chatbot_history.append({"role": "assistant", "content": content})
 
-    symptom_summary = format_symptom_summary(new_state.get("symptom_state"), new_state)
+    # Initialize state with the proper username
+    new_state = initialize_state(username=current_username)
+
+    # Set thread ID in state
+    new_state["thread_id"] = selected_thread_id
+
+    # Load symptom data from database
+    symptom_data = get_symptom_data(selected_thread_id)
+    if symptom_data:
+        print(
+            f"Loaded symptom data for thread {selected_thread_id}: {symptom_data.get('primary_symptoms', [])}"
+        )
+        symptom_state = SymptomState.model_validate(symptom_data)
+        new_state["symptom_state"] = symptom_state
+    else:
+        print(f"No symptom data found for thread {selected_thread_id}")
+
+    # Load medication data from database
+    medication_data = get_medication_data(selected_thread_id)
+    if medication_data:
+        print(
+            f"Loaded medication data for thread {selected_thread_id}: {list(medication_data.keys())}"
+        )
+
+        # Convert medication data back to MedicationLabel objects
+        extracted_medications = {}
+        for drug_name, med_data in medication_data.items():
+            extracted_medications[drug_name] = MedicationLabel.model_validate(med_data)
+        new_state["extracted_medications"] = extracted_medications
+    else:
+        print(f"No medication data found for thread {selected_thread_id}")
+
+    symptom_summary = format_symptom_summary(new_state)
 
     thread_display = f"## Active Thread\n\n{thread_summary}"
 
@@ -171,15 +203,18 @@ def respond(message, chat_history, state, thread_id, username):
     chat_history.append({"role": "user", "content": message})
 
     # This ensures the partial appearance
-    yield message, chat_history, state, "", thread_id, "", username  # Process the message
+    yield message, chat_history, state, "", thread_id, "", username
+
+    # Process the message
     print(f"Processing message: {message}")
     print(f"Current state: {state}")
     print(f"Using username: {username}")
+
     response, updated_state = process_user_input(message, state, thread_id, username)
     state = updated_state
 
     chat_history.append({"role": "assistant", "content": response})
-    symptom_summary = format_symptom_summary(state["symptom_state"], state)
+    symptom_summary = format_symptom_summary(state)
 
     # Update thread summary
     thread_summary = get_thread_summary(thread_id)
@@ -205,6 +240,10 @@ def create_new_conversation(username):
     state = initialize_state(username=username)
     state["thread_id"] = new_thread_id
 
+    # Clear any previously loaded symptom and medication data
+    state["symptom_state"] = SymptomState()
+    state["extracted_medications"] = {}
+
     return [], state, new_thread_id, "No symptoms or medications recorded yet", ""
 
 
@@ -218,14 +257,8 @@ def process_medication_upload(file_obj, chat_history, state, thread_id, username
         thread_id = create_new_thread(username)
         print(f"Created new thread for medication upload: {thread_id}")
 
-    # # Save uploaded file to a temporary location
-    # os.makedirs(os.path.join("upload", "drug_labels"), exist_ok=True)
-
     base_filename = os.path.basename(file_obj.name)
     temp_path = os.path.join("upload", "drug_labels", base_filename)
-
-    # Copy the file (handle NamedString from gradio)
-    import shutil
 
     # file_obj is the path to the temporary file
     shutil.copy2(file_obj, temp_path)
@@ -264,12 +297,10 @@ def process_medication_upload(file_obj, chat_history, state, thread_id, username
         )
 
         # Update the state with the results
-        state = updated_state  # Add the assistant's response to chat history
+        state = updated_state
         chat_history.append({"role": "assistant", "content": response})
 
-        # Update symptom summary and thread info using our updated function that includes medications
-        symptom_summary = format_symptom_summary(state["symptom_state"], state)
-
+        symptom_summary = format_symptom_summary(state)
         thread_summary = get_thread_summary(thread_id)
         thread_display = f"## Active Thread\n\n{thread_summary}"
 

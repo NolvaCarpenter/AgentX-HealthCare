@@ -41,6 +41,30 @@ def create_conversation_tables():
     """
     )
 
+    # Create symptoms data table
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS thread_symptoms (
+            thread_id TEXT PRIMARY KEY,
+            symptom_data TEXT,  -- JSON serialized symptom state
+            last_updated TEXT,
+            FOREIGN KEY (thread_id) REFERENCES conversation_threads(thread_id)
+        )
+    """
+    )
+
+    # Create medications data table
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS thread_medications (
+            thread_id TEXT PRIMARY KEY, 
+            medication_data TEXT,  -- JSON serialized medication state
+            last_updated TEXT,
+            FOREIGN KEY (thread_id) REFERENCES conversation_threads(thread_id)
+        )
+    """
+    )
+
     conn.commit()
     conn.close()
 
@@ -205,6 +229,168 @@ def get_thread_summary(thread_id: str) -> Dict[str, Any]:
         "last_updated": last_updated,
         "message_count": message_count,
     }
+
+
+def save_symptom_data(thread_id: str, symptom_data: Dict) -> None:
+    """Save symptom data for a conversation thread.
+
+    Args:
+        thread_id: The ID of the thread
+        symptom_data: Dictionary containing serializable symptom state
+    """
+    import json
+
+    timestamp = datetime.datetime.now().isoformat()
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Convert symptom data to JSON string
+    symptom_json = json.dumps(symptom_data)
+
+    # Check if thread already has symptoms data
+    cursor.execute(
+        """
+        SELECT 1 FROM thread_symptoms WHERE thread_id = ?
+        """,
+        (thread_id,),
+    )
+
+    if cursor.fetchone():
+        # Update existing record
+        cursor.execute(
+            """
+            UPDATE thread_symptoms
+            SET symptom_data = ?, last_updated = ?
+            WHERE thread_id = ?
+            """,
+            (symptom_json, timestamp, thread_id),
+        )
+    else:
+        # Insert new record
+        cursor.execute(
+            """
+            INSERT INTO thread_symptoms (thread_id, symptom_data, last_updated)
+            VALUES (?, ?, ?)
+            """,
+            (thread_id, symptom_json, timestamp),
+        )
+
+    conn.commit()
+    conn.close()
+
+
+def save_medication_data(thread_id: str, medication_data: Dict) -> None:
+    """Save medication data for a conversation thread.
+
+    Args:
+        thread_id: The ID of the thread
+        medication_data: Dictionary containing serializable medication state
+    """
+    import json
+
+    timestamp = datetime.datetime.now().isoformat()
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Convert medication data to JSON string
+    medication_json = json.dumps(medication_data)
+
+    # Check if thread already has medication data
+    cursor.execute(
+        """
+        SELECT 1 FROM thread_medications WHERE thread_id = ?
+        """,
+        (thread_id,),
+    )
+
+    if cursor.fetchone():
+        # Update existing record
+        cursor.execute(
+            """
+            UPDATE thread_medications
+            SET medication_data = ?, last_updated = ?
+            WHERE thread_id = ?
+            """,
+            (medication_json, timestamp, thread_id),
+        )
+    else:
+        # Insert new record
+        cursor.execute(
+            """
+            INSERT INTO thread_medications (thread_id, medication_data, last_updated)
+            VALUES (?, ?, ?)
+            """,
+            (thread_id, medication_json, timestamp),
+        )
+
+    conn.commit()
+    conn.close()
+
+
+def get_symptom_data(thread_id: str) -> Optional[Dict]:
+    """Get symptom data for a conversation thread.
+
+    Args:
+        thread_id: The ID of the thread
+
+    Returns:
+        Dictionary containing the symptom state or None if not found
+    """
+    import json
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT symptom_data
+        FROM thread_symptoms
+        WHERE thread_id = ?
+        """,
+        (thread_id,),
+    )
+
+    result = cursor.fetchone()
+    conn.close()
+
+    if result and result[0]:
+        return json.loads(result[0])
+
+    return None
+
+
+def get_medication_data(thread_id: str) -> Optional[Dict]:
+    """Get medication data for a conversation thread.
+
+    Args:
+        thread_id: The ID of the thread
+
+    Returns:
+        Dictionary containing the medication state or None if not found
+    """
+    import json
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT medication_data
+        FROM thread_medications
+        WHERE thread_id = ?
+        """,
+        (thread_id,),
+    )
+
+    result = cursor.fetchone()
+    conn.close()
+
+    if result and result[0]:
+        return json.loads(result[0])
+
+    return None
 
 
 # Create tables when this module is imported

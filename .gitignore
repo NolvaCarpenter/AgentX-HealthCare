@@ -9,6 +9,7 @@ venv/
 .pybuilder/
 target/
 bk/
+upload/drug_labels
 
 __pycache__
 
