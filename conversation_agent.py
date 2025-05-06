@@ -49,11 +49,14 @@ MAX_CHAT_HISTORY_LENGTH = 5  # Maximum number of chat history messages to keep
 
 
 # Define the nodes for the conversation graph
-def initialize_state(configurable=None) -> ConversationState:
+def initialize_state(
+    configurable=None, username: str = "default_user"
+) -> ConversationState:
     """Initialize the conversation state.
 
     Args:
         configurable: Optional configuration object provided by LangGraph
+        username: The username of the current user
     """
     # Check if a thread_id is provided in various sources
     thread_id = None
@@ -74,8 +77,13 @@ def initialize_state(configurable=None) -> ConversationState:
         thread_id = f"{timestamp}-{str(uuid.uuid4())[:8]}"
         print(f"[INFO] Generated new thread_id: {thread_id}")
 
+    # Get user_id from configurable or use provided username
+    user_id = username
+    if configurable and isinstance(configurable, dict) and "user_id" in configurable:
+        user_id = configurable.get("user_id")
+
     return {
-        "user_id": "default_user",
+        "user_id": user_id,
         "thread_id": thread_id,
         "user_input": "",
         "ai_response": "",
@@ -313,12 +321,6 @@ def process_symptoms(state: ConversationState) -> ConversationState:
         "extracted_symptoms": processed_symptoms,
         "current_action": "extract_details",
     }
-    # return {
-    #     **state,
-    #     "symptom_state": symptom_state,
-    #     "extracted_symptoms": extracted_symptoms,
-    #     "current_action": "extract_details",
-    # }
 
 
 def extract_details(state: ConversationState) -> ConversationState:
@@ -832,6 +834,7 @@ def process_user_input(
     user_input: str,
     state: Optional[ConversationState] = None,
     thread_id: Optional[str] = None,
+    username: str = "default_user",
 ) -> Tuple[str, ConversationState]:
     """Process user input and return the AI response and updated state."""
 
@@ -844,22 +847,23 @@ def process_user_input(
             if langgraph_thread_id:
                 thread_id = langgraph_thread_id
             else:
-                thread_id = create_new_thread(config["configurable"]["user_id"])
-
-        # Create LangGraph configurable with the thread_id
+                thread_id = create_new_thread(
+                    username
+                )  # Create LangGraph configurable with the thread_id and username
         graph_configurable = {
             "thread_id": thread_id,
-            "user_id": config["configurable"]["user_id"],
+            "user_id": username,
         }
 
-        # Initialize state with the configurable parameter
-        state = initialize_state(configurable=graph_configurable)
+        # Initialize state with the configurable parameter and username
+        state = initialize_state(configurable=graph_configurable, username=username)
 
         # Ensure thread_id is set in the state
         state["thread_id"] = thread_id
 
         # Also update the module-level config
         config["configurable"]["thread_id"] = thread_id
+        config["configurable"]["user_id"] = username
 
         # Run the graph to get the greeting with the configurable
         graph_config = {"configurable": graph_configurable}

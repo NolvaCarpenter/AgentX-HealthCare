@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# filepath: d:\VSCodeProjects\baymax_team_collab\conversation_thread.py
 
 import sqlite3
 import uuid
@@ -56,6 +55,8 @@ def create_new_thread(user_id: str = "default_user") -> str:
     """Create a new conversation thread and return its ID."""
     thread_id = generate_thread_id()
     timestamp = datetime.datetime.now().isoformat()
+
+    print(f"Creating new thread: {thread_id} for user: {user_id}")
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -130,12 +131,15 @@ def get_thread_history(thread_id: str) -> List[Dict[str, str]]:
 
 def get_active_threads(user_id: str = "default_user") -> List[Dict[str, Any]]:
     """Get all active threads for a user."""
+    print(f"Getting active threads for user: {user_id}")
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
+    # Get threads for specific user if provided, otherwise get all threads
     cursor.execute(
         """
-        SELECT thread_id, created_at, last_updated
+        SELECT thread_id, created_at, last_updated, user_id
         FROM conversation_threads
         WHERE user_id = ? AND is_active = 1
         ORDER BY last_updated DESC
@@ -144,12 +148,18 @@ def get_active_threads(user_id: str = "default_user") -> List[Dict[str, Any]]:
     )
 
     threads = [
-        {"thread_id": thread_id, "created_at": created_at, "last_updated": last_updated}
-        for thread_id, created_at, last_updated in cursor.fetchall()
+        {
+            "thread_id": thread_id,
+            "created_at": created_at,
+            "last_updated": last_updated,
+            "user_id": thread_user_id,
+        }
+        for thread_id, created_at, last_updated, thread_user_id in cursor.fetchall()
     ]
 
     conn.close()
 
+    print(f"Found {len(threads)} active threads for user: {user_id}")
     return threads
 
 
