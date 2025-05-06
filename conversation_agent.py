@@ -67,6 +67,7 @@ def initialize_state(
         print(f"[INFO] Using thread_id from LangGraph configurable: {thread_id}")
 
     # Option 2: Check the module-level config
+    # TODO: this global config is not thread-safe, need to be fixed in the future.
     elif "configurable" in config and "thread_id" in config["configurable"]:
         thread_id = config["configurable"]["thread_id"]
         print(f"[INFO] Using thread_id from module config: {thread_id}")
@@ -109,39 +110,53 @@ def prepare_medication_upload(state: ConversationState) -> ConversationState:
     Returns:
         ConversationState: The updated state
     """
-    # Display available samples
-    print("\nMedication Label Upload:")
-    samples = get_available_samples()
-    if samples:
-        print(f"Available sample files: {', '.join(samples)}")
-    else:
-        print("No sample files found in default directory.")
+    # Check if filename is already in state (from Gradio upload)
+    if state.get("filename", ""):
+        filename = state["filename"]
+        print(f"Using uploaded file from Gradio: {filename}")
+        valid_filename = filename  # Assume the file is already validated by process_medication_upload
 
-    # Prompt for filename
-    filename = input(
-        "Enter medication label image filename (or press Enter for default): "
-    ).strip()
-
-    # Validate the filename
-    valid_filename, message = validate_medication_image(filename)
-    print(message)
-
-    if valid_filename:
-        print(f"Processing file: {valid_filename}")
-        # Return updated state with t Fashion he filename and next action
+        # Return updated state with the filename and next action
         return {
             **state,
             "filename": valid_filename,
-            "ai_response": f"I've successfully processed your medication label from the file: {valid_filename}. Any other things you want to share with me?",
             "current_action": "extract_medication_labels",
         }
     else:
-        print("Could not process medication label. Please try again.")
-        return {
-            **state,
-            "ai_response": "I couldn't process the medication label. Please try again with a valid image file.",
-            "current_action": "generate_response",
-        }
+        # Fall back to command line input for non-Gradio interfaces
+        # Display available samples
+        print("\nMedication Label Upload:")
+        samples = get_available_samples()
+        if samples:
+            print(f"Available sample files: {', '.join(samples)}")
+        else:
+            print("No sample files found in default directory.")
+
+        # Prompt for filename
+        filename = input(
+            "Enter medication label image filename (or press Enter for default): "
+        ).strip()
+
+        # Validate the filename
+        valid_filename, message = validate_medication_image(filename)
+        print(message)
+
+        if valid_filename:
+            print(f"Processing file: {valid_filename}")
+            # Return updated state with the filename and next action
+            return {
+                **state,
+                "filename": valid_filename,
+                "ai_response": f"I've successfully processed your medication label from the file: {valid_filename}. Any other things you want to share with me?",
+                "current_action": "extract_medication_labels",
+            }
+        else:
+            print("Could not process medication label. Please try again.")
+            return {
+                **state,
+                "ai_response": "I couldn't process the medication label. Please try again with a valid image file.",
+                "current_action": "generate_response",
+            }
 
 
 def extract_medication_labels(state: ConversationState) -> ConversationState:
@@ -159,38 +174,81 @@ def extract_medication_labels(state: ConversationState) -> ConversationState:
     medication_state = state["medication_state"]
     filename = state["filename"]
 
-    # Update the medication state with the filename
-    medication_state.filename = (
-        filename  # Run the medication workflow to extract information
-    )
-    medication_workflow = build_medication_workflow()
-    processed_state = medication_workflow.invoke(medication_state)
+    print(f"Processing medication image: {filename}")
 
-    # If processed_state is an AdjustableValueDict, convert it to a MedicationProcessState
-    if isinstance(processed_state, dict):
-        processed_state = MedicationProcessState(**processed_state)
+    # Update the medication state with the filename and user_id
+    medication_state.filename = filename
+    medication_state.user_id = state["user_id"]
 
-    # Get the extracted medication label
-    extracted_label = processed_state.label
+    try:
+        # Run the medication workflow to extract information
+        medication_workflow = build_medication_workflow()
+        processed_state = medication_workflow.invoke(medication_state)
 
-    # If a medication was successfully extracted, add it to extracted_medications
-    extracted_medications = state.get("extracted_medications", {})
-    if extracted_label:
-        # Use the drug name as the key for the medication
-        drug_name = (
-            extracted_label.drug_name
-            if extracted_label.drug_name
-            else "Unknown Medication"
-        )
-        extracted_medications[drug_name] = extracted_label
+        # If processed_state is an AdjustableValueDict, convert it to a MedicationProcessState
+        if isinstance(processed_state, dict):
+            processed_state = MedicationProcessState(**processed_state)
 
-    # Update state with processed medication information
-    return {
-        **state,
-        "medication_state": processed_state,
-        "extracted_medications": extracted_medications,
-        "current_action": "generate_response",
-    }
+        # Get the extracted medication label
+        extracted_label = processed_state.label
+
+        # Format a response message based on the extraction results
+        if extracted_label and extracted_label.drug_name:
+            # If a medication was successfully extracted, add it to extracted_medications
+            extracted_medications = state.get("extracted_medications", {})
+            drug_name = extracted_label.drug_name
+
+            # Create a nicely formatted response
+            response_parts = [
+                f"I've successfully processed your medication label for **{drug_name}**."
+            ]
+
+            # Add key medication details if available
+            details = []
+            if extracted_label.drug_strength:
+                details.append(f"Strength: {extracted_label.drug_strength}")
+            if extracted_label.drug_instructions:
+                details.append(f"Instructions: {extracted_label.drug_instructions}")
+            if extracted_label.pharmacy_name:
+                details.append(f"Pharmacy: {extracted_label.pharmacy_name}")
+            if extracted_label.prescriber_name:
+                details.append(f"Prescriber: {extracted_label.prescriber_name}")
+
+            if details:
+                response_parts.append("Here are the key details:")
+                for detail in details:
+                    response_parts.append(f"- {detail}")
+
+            response_parts.append(
+                "This information has been stored for reference. Is there anything else you'd like to know about this medication?"
+            )
+
+            ai_response = "\n\n".join(response_parts)
+            extracted_medications[drug_name] = extracted_label
+
+            return {
+                **state,
+                "medication_state": processed_state,
+                "extracted_medications": extracted_medications,
+                "ai_response": ai_response,
+                "current_action": "update_history",
+            }
+        else:
+            # If no medication was extracted or the OCR failed
+            return {
+                **state,
+                "medication_state": processed_state,
+                "ai_response": "I couldn't identify medication information from the uploaded image. Please make sure the image is clear and contains readable medication label information.",
+                "current_action": "update_history",
+            }
+
+    except Exception as e:
+        print(f"Error processing medication image: {str(e)}")
+        return {
+            **state,
+            "ai_response": f"I encountered an error while processing the medication label: {str(e)}. Please try uploading a clearer image.",
+            "current_action": "update_history",
+        }
 
 
 def check_symptom_context(state: ConversationState) -> str:
@@ -203,11 +261,30 @@ def check_symptom_context(state: ConversationState) -> str:
 
     # Check if user is requesting a summary
     if "summary" in user_input.lower() or "summarize" in user_input.lower():
-        return "generate_summary"  # upload photo or medication label
+        return "generate_summary"
 
-    # Check if user is uploading a medication label
-    if "upload" in user_input.lower() or "photo" in user_input.lower():
-        return "prepare_medication_upload"
+    # Check if user is uploading a medication label or if a filename is already set
+    # This handles both text commands and direct uploads via the Gradio interface
+    if (
+        "upload" in user_input.lower()
+        or "photo" in user_input.lower()
+        or "medication label" in user_input.lower()
+        or "process this medication" in user_input.lower()
+        or state.get("filename", "")
+    ):  # Check if a filename is already in state
+
+        # If this is from a direct file upload and we're just processing the command
+        if "process this medication label" in user_input.lower() and state.get(
+            "filename", ""
+        ):
+            return "prepare_medication_upload"
+
+        # If there's a user request to upload
+        if any(
+            term in user_input.lower()
+            for term in ["upload", "photo", "medication label"]
+        ):
+            return "prepare_medication_upload"
 
     # List of terms that might indicate symptom-related context
     # TODO: enhance the symptom indicators with knowledge-base or RAG.
@@ -243,11 +320,25 @@ def check_symptom_context(state: ConversationState) -> str:
         "doctor",
         "hospital",
         "medicine",
-        "medication",
         "treatment",
         "condition",
         "severity",
         "symptoms",
+    ]
+
+    # Add medication-related terms to check for medication context
+    medication_indicators = [
+        "medication",
+        "medicine",
+        "drug",
+        "prescription",
+        "pill",
+        "tablet",
+        "capsule",
+        "dose",
+        "pharmacy",
+        "prescribe",
+        "refill",
     ]
 
     # Check if any symptom indicator is present in user input
@@ -255,14 +346,20 @@ def check_symptom_context(state: ConversationState) -> str:
         indicator in user_input.lower() for indicator in symptom_indicators
     )
 
+    # Check if any medication indicator is present but not about uploading
+    is_medication_related = any(
+        indicator in user_input.lower() for indicator in medication_indicators
+    ) and not any(term in user_input.lower() for term in ["upload", "photo", "label"])
+
     # Return the next node as a string, not a dict
     if is_symptom_related:
         return "extract_symptoms"
-    # TODO: check if user has medication or drug related to symptoms
-    # elif "medication" in user_input.lower() or "drug" in user_input.lower():
-    #     return "extract_medications"
+    elif is_medication_related and state.get("extracted_medications"):
+        # If talking about medications and we have medication data, use generate_response
+        # The response generator will include medication information
+        return "generate_response"
     else:
-        # If not symptom-related, generate a response and skip symptom extraction
+        # If not symptom-related or medication-related, generate a response and skip extraction
         return "generate_response"
 
 
@@ -589,12 +686,20 @@ def generate_response(state: ConversationState) -> ConversationState:
     # Format symptoms and chat history for the prompt
     symptoms_text = (
         ", ".join(extracted_symptoms.keys()) if extracted_symptoms else "None"
-    )
+    )  # Format medication information for the prompt
+    medication_details = []
+    if extracted_medications:
+        for drug_name, medication in extracted_medications.items():
+            med_info = [f"{drug_name}"]
+            if medication.drug_strength:
+                med_info.append(f"Strength: {medication.drug_strength}")
+            if medication.drug_instructions:
+                med_info.append(f"Instructions: {medication.drug_instructions}")
+            medication_details.append(" - ".join(med_info))
 
-    # Format medication information for the prompt
-    medication_text = (
-        ", ".join(extracted_medications.keys()) if extracted_medications else "None"
-    )
+        medication_text = "\n".join(medication_details)
+    else:
+        medication_text = "None"
 
     chat_history_text = "\n".join(
         [
@@ -826,6 +931,7 @@ def display_workflow():
 
 
 # Set configuration with default values
+# TODO: remove this global config in the future.
 config = {"configurable": {"user_id": "default_user", "thread_id": None}}
 
 
@@ -840,43 +946,27 @@ def process_user_input(
 
     # Initialize state if not provided
     if state is None:
-        # Use thread_id from parameter, or from LangGraph config, or create a new one
         if thread_id is None:
-            # Check if a thread_id was provided in the LangGraph config
-            langgraph_thread_id = config["configurable"].get("thread_id")
-            if langgraph_thread_id:
-                thread_id = langgraph_thread_id
-            else:
-                thread_id = create_new_thread(
-                    username
-                )  # Create LangGraph configurable with the thread_id and username
+            thread_id = create_new_thread(username)
+
+        # Initialize state with the configurable parameter and username
         graph_configurable = {
             "thread_id": thread_id,
             "user_id": username,
         }
 
-        # Initialize state with the configurable parameter and username
         state = initialize_state(configurable=graph_configurable, username=username)
-
-        # Ensure thread_id is set in the state
-        state["thread_id"] = thread_id
-
-        # Also update the module-level config
-        config["configurable"]["thread_id"] = thread_id
-        config["configurable"]["user_id"] = username
 
         # Run the graph to get the greeting with the configurable
         graph_config = {"configurable": graph_configurable}
         state = conversation_graph.invoke(state, graph_config)
 
-        # Save the greeting message to the thread
         if state["ai_response"]:
             save_message(thread_id, "assistant", state["ai_response"])
 
-        return (
-            state["ai_response"],
-            state,
-        )  # Use the thread_id from the state if not explicitly provided
+        return state["ai_response"], state
+
+    # Use the thread_id from the state if not explicitly provided
     if thread_id is None and "thread_id" in state:
         thread_id = state["thread_id"]
 
@@ -888,16 +978,15 @@ def process_user_input(
     state = {
         **state,
         "user_input": user_input,
-        "thread_id": thread_id,  # Make sure thread_id is in the state
-        "current_action": "check_symptom_context",  # Set to our new conditional check
-    }  # Create the configurable object for LangGraph
-    graph_configurable = {
         "thread_id": thread_id,
-        "user_id": config["configurable"]["user_id"],
+        "current_action": "check_symptom_context",  # Set to our new conditional check
     }
 
-    # Update module-level config for consistency
-    config["configurable"]["thread_id"] = thread_id
+    # Create the configurable object for LangGraph
+    graph_configurable = {
+        "thread_id": state["thread_id"],
+        "user_id": state["user_id"] or username,
+    }
 
     # Run the graph with the thread_id in the config
     graph_config = {"configurable": graph_configurable}
@@ -914,27 +1003,3 @@ def process_user_input(
 if __name__ == "__main__":
     print("\nDisplaying conversation workflow diagram...")
     display_workflow()
-
-    # Example of direct LangGraph thread_id usage:
-    def example_langgraph_thread_usage():
-        """Example showing how to use thread_id directly with LangGraph"""
-        print("\nExample of direct LangGraph thread usage:")
-
-        # Create initial state
-        state = initialize_state()
-        state["user_input"] = "I have a headache and fever"
-
-        # Set up configuration with specific thread_id
-        langgraph_config = {"configurable": {"thread_id": "example-thread-123"}}
-
-        # Invoke graph with config
-        output = conversation_graph.invoke(state, langgraph_config)
-
-        # Access results
-        print(f"Thread ID used: {output['thread_id']}")
-        print(f"AI Response: {output['ai_response']}")
-
-        return output
-
-    # Uncomment to run the example
-    # example_langgraph_thread_usage()

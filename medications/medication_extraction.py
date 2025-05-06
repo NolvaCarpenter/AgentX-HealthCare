@@ -144,7 +144,8 @@ def extract_step(state: MedicationProcessState) -> MedicationProcessState:
 def validate_step(state: MedicationProcessState) -> MedicationProcessState:
     """
     Validates the extracted medication information.
-    In a production environment, this would include user interaction.
+    In GUI mode, this runs automatically without user confirmation.
+    In CLI mode, this will ask for user confirmation.
     """
     print("\nFinal Medication Information Summary:")
     print("====================================")
@@ -152,15 +153,11 @@ def validate_step(state: MedicationProcessState) -> MedicationProcessState:
         if value:
             print(f"{field.replace('_', ' ').title()}: {value}")
 
-    # In a real application, you would add user validation here
-    # For now, we'll assume the information is correct
-    final_confirm = (
-        input("\nStore this medication information in the database? (y/n): ")
-        .lower()
-        .strip()
-    )
-
-    if final_confirm == "y":
+    # Check if we're in a GUI context (Gradio interface) or CLI
+    # If we have a user_id set, we're likely in Gradio mode
+    if state.user_id and state.user_id != "default_user":
+        # Automatically store the medication without user confirmation
+        print(f"Automatically storing medication information for user: {state.user_id}")
         store_medication(state.user_id, state.label)
 
         # Add the validated label to the medications list
@@ -171,7 +168,25 @@ def validate_step(state: MedicationProcessState) -> MedicationProcessState:
             update={"validated": True, "medications": updated_medications}
         )
     else:
-        return state.model_copy(update={"validated": False})
+        # In CLI mode, ask for confirmation
+        final_confirm = (
+            input("\nStore this medication information in the database? (y/n): ")
+            .lower()
+            .strip()
+        )
+
+        if final_confirm == "y":
+            store_medication(state.user_id, state.label)
+
+            # Add the validated label to the medications list
+            updated_medications = state.medications.copy()
+            updated_medications.append(state.label)
+
+            return state.model_copy(
+                update={"validated": True, "medications": updated_medications}
+            )
+        else:
+            return state.model_copy(update={"validated": False})
 
 
 def store_medication(user_id: str, label: MedicationLabel):

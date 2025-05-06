@@ -16,55 +16,86 @@ from conversation_thread import (
     get_thread_history,
     get_thread_summary,
 )
+from utils.gradio_styles import gradio_css
+from medications.handle_upload import validate_medication_image
 
 
-def format_symptom_summary(symptom_state):
+def format_symptom_summary(symptom_state, state=None):
     """Format the symptom state into a markdown summary."""
+    summary = "## Symptom Tracking\n\n"
 
-    summary = "## Symptoms Tracking\n\n"
-
+    # Handle symptoms summary
     if (
         not symptom_state
         or not hasattr(symptom_state, "primary_symptoms")
         or not symptom_state.primary_symptoms
     ):
-        return summary + "No symptoms recorded yet"
+        summary += "No symptoms recorded yet\n\n"
+    else:
+        for symptom in symptom_state.primary_symptoms:
+            summary += f"- **{symptom}**\n"
+            if symptom in symptom_state.symptom_details:
+                details = symptom_state.symptom_details[symptom]
+                if details.severity:
+                    summary += f"  - Severity: Level {details.severity.level if details.severity.level is not None else 'Not specified'}\n"
+                    if details.severity.description:
+                        summary += (
+                            f"    - Description: {details.severity.description}\n"
+                        )
+                if details.duration:
+                    if details.duration.start_date:
+                        summary += f"  - Started: {details.duration.start_date}\n"
+                    if details.duration.is_ongoing:
+                        summary += f"  - Status: Ongoing\n"
+                    elif details.duration.end_date:
+                        summary += f"  - Ended: {details.duration.end_date}\n"
+                if details.characteristics:
+                    summary += (
+                        f"  - Characteristics: {', '.join(details.characteristics)}\n"
+                    )
+                if details.location:
+                    summary += f"  - Location: {details.location}\n"
+                if details.quality:
+                    summary += f"  - Quality: {details.quality}\n"
+                if details.frequency:
+                    summary += f"  - Frequency: {details.frequency}\n"
+                if details.aggravating_factors:
+                    summary += f"  - Aggravating factors: {', '.join(details.aggravating_factors)}\n"
+                if details.relieving_factors:
+                    summary += f"  - Relieving factors: {', '.join(details.relieving_factors)}\n"
+                if details.associated_symptoms:
+                    summary += f"  - Associated symptoms: {', '.join(details.associated_symptoms)}\n"
+                if details.context:
+                    summary += f"  - Context: {details.context}\n"
+                summary += "\n"
 
-    for symptom in symptom_state.primary_symptoms:
-        summary += f"- **{symptom}**\n"
-        if symptom in symptom_state.symptom_details:
-            details = symptom_state.symptom_details[symptom]
-            if details.severity:
-                summary += f"  - Severity: Level {details.severity.level if details.severity.level is not None else 'Not specified'}\n"
-                if details.severity.description:
-                    summary += f"    - Description: {details.severity.description}\n"
-            if details.duration:
-                if details.duration.start_date:
-                    summary += f"  - Started: {details.duration.start_date}\n"
-                if details.duration.is_ongoing:
-                    summary += f"  - Status: Ongoing\n"
-                elif details.duration.end_date:
-                    summary += f"  - Ended: {details.duration.end_date}\n"
-            if details.characteristics:
-                summary += (
-                    f"  - Characteristics: {', '.join(details.characteristics)}\n"
-                )
-            if details.location:
-                summary += f"  - Location: {details.location}\n"
-            if details.quality:
-                summary += f"  - Quality: {details.quality}\n"
-            if details.frequency:
-                summary += f"  - Frequency: {details.frequency}\n"
-            if details.aggravating_factors:
-                summary += f"  - Aggravating factors: {', '.join(details.aggravating_factors)}\n"
-            if details.relieving_factors:
-                summary += (
-                    f"  - Relieving factors: {', '.join(details.relieving_factors)}\n"
-                )
-            if details.associated_symptoms:
-                summary += f"  - Associated symptoms: {', '.join(details.associated_symptoms)}\n"
-            if details.context:
-                summary += f"  - Context: {details.context}\n"
+    # Add medication information if available
+    if state and "extracted_medications" in state and state["extracted_medications"]:
+        summary += "## Medications\n\n"
+        for drug_name, medication in state["extracted_medications"].items():
+            summary += f"- **{drug_name}**\n"
+
+            if hasattr(medication, "drug_strength") and medication.drug_strength:
+                summary += f"  - Strength: {medication.drug_strength}\n"
+
+            if (
+                hasattr(medication, "drug_instructions")
+                and medication.drug_instructions
+            ):
+                summary += f"  - Instructions: {medication.drug_instructions}\n"
+
+            if hasattr(medication, "prescriber_name") and medication.prescriber_name:
+                summary += f"  - Prescriber: {medication.prescriber_name}\n"
+
+            if hasattr(medication, "pharmacy_name") and medication.pharmacy_name:
+                summary += f"  - Pharmacy: {medication.pharmacy_name}\n"
+
+            if hasattr(medication, "refill_count") and medication.refill_count:
+                summary += f"  - Refills: {medication.refill_count}\n"
+
+            if hasattr(medication, "federal_caution") and medication.federal_caution:
+                summary += f"  - Warning: {medication.federal_caution}\n"
+
             summary += "\n"
 
     return summary
@@ -78,6 +109,8 @@ def start_conversation(name):
     # Set username to use for the whole session
     username = name.strip().replace(" ", "_").lower()
     print(f"Starting conversation for user: {username}")
+
+    refresh_thread_list(username)
 
     # Hide login screen and show chat interface
     return (
@@ -100,16 +133,18 @@ def switch_thread(selected_thread_id, current_username):
         if role == "user":
             chatbot_history.append({"role": "user", "content": content})
         elif role == "assistant":
-            chatbot_history.append({"role": "assistant", "content": content})
-
-    # Initialize state from thread history with the proper username
+            chatbot_history.append(
+                {"role": "assistant", "content": content}
+            )  # Initialize state from thread history with the proper username
     new_state = initialize_state(username=current_username)
     if thread_messages:
         for message in thread_messages:
             if "symptom_state" in message:
                 new_state = message["symptom_state"]
+            if "extracted_medications" in message:
+                new_state["extracted_medications"] = message["extracted_medications"]
 
-    symptom_summary = format_symptom_summary(new_state)
+    symptom_summary = format_symptom_summary(new_state.get("symptom_state"), new_state)
 
     thread_display = f"## Active Thread\n\n{thread_summary}"
 
@@ -136,9 +171,7 @@ def respond(message, chat_history, state, thread_id, username):
     chat_history.append({"role": "user", "content": message})
 
     # This ensures the partial appearance
-    yield message, chat_history, state, "", thread_id, "", username
-
-    # Process the message
+    yield message, chat_history, state, "", thread_id, "", username  # Process the message
     print(f"Processing message: {message}")
     print(f"Current state: {state}")
     print(f"Using username: {username}")
@@ -146,7 +179,7 @@ def respond(message, chat_history, state, thread_id, username):
     state = updated_state
 
     chat_history.append({"role": "assistant", "content": response})
-    symptom_summary = format_symptom_summary(state["symptom_state"])
+    symptom_summary = format_symptom_summary(state["symptom_state"], state)
 
     # Update thread summary
     thread_summary = get_thread_summary(thread_id)
@@ -159,10 +192,7 @@ def refresh_thread_list(username="default_user"):
     """Refresh the list of conversation threads."""
     print(f"Refreshing threads for user: {username}")
     active_threads = get_active_threads(user_id=username)
-    thread_choices = [
-        (thread["thread_id"], f"Thread from {thread['last_updated']}")
-        for thread in active_threads
-    ]
+    thread_choices = [thread["thread_id"] for thread in active_threads]
     return gr.update(choices=thread_choices)
 
 
@@ -170,112 +200,96 @@ def create_new_conversation(username):
     """Create a new conversation for the current user."""
     print(f"Creating new conversation for user: {username}")
     new_thread_id = create_new_thread(username)
-    return [], None, new_thread_id, "No symptoms recorded yet", ""
+
+    # Initialize an empty state with the proper username
+    state = initialize_state(username=username)
+    state["thread_id"] = new_thread_id
+
+    return [], state, new_thread_id, "No symptoms or medications recorded yet", ""
+
+
+def process_medication_upload(file_obj, chat_history, state, thread_id, username):
+    """Process uploaded medication label image."""
+    if file_obj is None:
+        return chat_history, state, "No file uploaded", thread_id, "", username
+
+    # Create a thread if one doesn't exist
+    if not thread_id:
+        thread_id = create_new_thread(username)
+        print(f"Created new thread for medication upload: {thread_id}")
+
+    # # Save uploaded file to a temporary location
+    # os.makedirs(os.path.join("upload", "drug_labels"), exist_ok=True)
+
+    base_filename = os.path.basename(file_obj.name)
+    temp_path = os.path.join("upload", "drug_labels", base_filename)
+
+    # Copy the file (handle NamedString from gradio)
+    import shutil
+
+    # file_obj is the path to the temporary file
+    shutil.copy2(file_obj, temp_path)
+
+    # Validate the file
+    valid_filename, message = validate_medication_image(temp_path)
+
+    # Add user message to the chat history
+    chat_history.append(
+        {
+            "role": "user",
+            "content": f"I'm uploading a medication label: {base_filename}",
+        }
+    )
+
+    if valid_filename:
+        # Initialize state if needed
+        if state is None:
+            state = initialize_state(username=username)
+
+        # Set thread_id in the state
+        state["thread_id"] = thread_id
+
+        # Update state with the filename and prepare for processing
+        state["filename"] = valid_filename
+        state["current_action"] = "prepare_medication_upload"
+
+        print(f"Processing medication label: {valid_filename}")
+
+        # First, directly run the medication processing through the agent
+        response, updated_state = process_user_input(
+            f"Process this medication label: {valid_filename}",
+            state,
+            thread_id,
+            username,
+        )
+
+        # Update the state with the results
+        state = updated_state  # Add the assistant's response to chat history
+        chat_history.append({"role": "assistant", "content": response})
+
+        # Update symptom summary and thread info using our updated function that includes medications
+        symptom_summary = format_symptom_summary(state["symptom_state"], state)
+
+        thread_summary = get_thread_summary(thread_id)
+        thread_display = f"## Active Thread\n\n{thread_summary}"
+
+        return chat_history, state, symptom_summary, thread_id, thread_display, username
+    else:
+        # Handle error case
+        error_message = f"I couldn't process the medication label. {message} Please try again with a valid image file."
+        chat_history.append({"role": "assistant", "content": error_message})
+        return chat_history, state, "", thread_id, "", username
 
 
 # Create Gradio interface
 with gr.Blocks(
     title="Healthcare Conversation Assistant",
-    css="""
-        /* Main styling for the entire interface */
-        .gradio-container {
-            background-color: white;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-        }
-        
-        /* Login container styling */
-        #login-container {
-            background-color: white;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-            padding: 20px;
-            max-width: 800px;
-            margin: 50px auto;
-        }
-        
-        /* Card styling for components */
-        .card {
-            background-color: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
-            padding: 15px;
-            margin-bottom: 15px;
-        }
-        
-        /* Header styling */
-        h1, h2, h3 {
-            font-weight: 600;
-            color: #333;
-        }
-        
-        /* Button styling */
-        button.primary {
-            background-color: #0078d4 !important;
-            border: none;
-            color: white;
-        }
-        
-        /* Secondary buttons */
-        .secondary-button {
-            border: 1px solid #0078d4 !important;
-            color: #0078d4 !important;
-            background-color: white !important;
-        }
-        
-        /* Chat interface styling */
-        #chat-interface {
-            background-color: white;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-            padding: 20px;
-        }
-        
-        /* Message container */
-        .message {
-            padding: 10px 15px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-        }
-        
-        /* User message */
-        .user-message {
-            background-color: #e6f2ff;
-            color: #333;
-            margin-left: 20%;
-        }
-        
-        /* Bot message */
-        .bot-message {
-            background-color: #f5f5f7;
-            color: #333;
-            margin-right: 20%;
-        }
-        
-        /* Sidebar with symptoms */
-        .sidebar {
-            background-color: white;
-            border-radius: 8px;
-            padding: 15px;
-        }
-        
-        /* Improve textbox appearance */
-        .gr-box {
-            border-radius: 8px !important;
-            border: 1px solid #ddd !important;
-        }
-        
-        /* Conversation container */
-        .gr-chatbox {
-            border: 1px solid #eee;
-            border-radius: 10px;
-            overflow: hidden;
-        }
-    """,
+    css=gradio_css,
 ) as demo:
     # Add states for conversation
     state = gr.State(None)
     thread_id = gr.State(None)
-    username = gr.State("")  # Add a state to store the username
+    username = gr.State(None)
 
     # Login screen
     with gr.Group(visible=True, elem_id="login-container") as login_screen:
@@ -293,7 +307,7 @@ with gr.Blocks(
 
     # Main chat interface (hidden initially)
     with gr.Group(visible=False, elem_id="chat-interface") as chat_interface:
-        with gr.Row():
+        with gr.Row(equal_height=True):
             # Use messages format for chatbot (recommended)
             with gr.Column(scale=2):
                 chatbot = gr.Chatbot(
@@ -308,15 +322,18 @@ with gr.Blocks(
                         label="",
                         placeholder="Describe your symptoms or ask a question...",
                         lines=1,
-                        scale=5,
+                        scale=4,
                         elem_classes=["gr-box"],
                         container=False,
                     )
                     submit_btn = gr.Button("Send 📨", scale=1, variant="primary")
 
-                with gr.Row():
-                    clear = gr.Button(
-                        "New Conversation", elem_classes=["secondary-button"]
+                    file_upload = gr.UploadButton(
+                        "Upload 📷",
+                        file_types=["image"],
+                        scale=1,
+                        variant="primary",
+                        file_count="single",
                     )
 
             # Sidebar for symptoms and thread information
@@ -345,6 +362,10 @@ with gr.Blocks(
                     refresh_threads = gr.Button(
                         "Refresh Threads", elem_classes=["secondary-button"]
                     )
+                with gr.Row():
+                    clear = gr.Button(
+                        "New Conversation", elem_classes=["secondary-button"]
+                    )
 
     # Wire up the interface
     submit_btn.click(
@@ -365,6 +386,20 @@ with gr.Blocks(
         inputs=[msg, chatbot, state, thread_id, username],
         outputs=[
             msg,
+            chatbot,
+            state,
+            symptoms_display,
+            thread_id,
+            thread_info,
+            username,
+        ],
+    )
+
+    # File upload handling
+    file_upload.upload(
+        process_medication_upload,
+        inputs=[file_upload, chatbot, state, thread_id, username],
+        outputs=[
             chatbot,
             state,
             symptoms_display,
@@ -399,9 +434,8 @@ with gr.Blocks(
         refresh_thread_list, inputs=[username], outputs=[thread_dropdown]
     )
 
-    # Initialize thread list with default user (will be updated when user logs in)
-    # demo.load(lambda: refresh_thread_list("default_user"), outputs=[thread_dropdown])
-
+    # Initialize thread list
+    # demo.load(refresh_thread_list, inputs=[username], outputs=[thread_dropdown])
 
 if __name__ == "__main__":
     # Launch the demo
