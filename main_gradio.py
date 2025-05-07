@@ -137,6 +137,7 @@ def process_medication_upload(file_obj, chat_history, state, thread_id, username
     else:
         # Handle error case
         error_message = f"I couldn't process the medication label. {message} Please try again with a valid image file."
+        print(f"Error processing medication label: {error_message}")
 
         # Add error message
         chat_history.append({"role": "assistant", "content": error_message})

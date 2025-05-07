@@ -11,7 +11,7 @@ def validate_medication_image(filename=None):
     Returns:
         tuple: (valid_filename, message) where message describes any changes made
     """
-    default_path = "data/drug_labels/"
+    default_path = "upload/drug_labels/"
     default_file = "prescription label example.png"
     default_full_path = os.path.join(default_path, default_file)
     message = ""

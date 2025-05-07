@@ -4,9 +4,6 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 from langgraph.graph import StateGraph, END
 from typing import Dict, List, Any, TypedDict, Optional, Tuple, Literal
-import os
-import tempfile
-import webbrowser
 import uuid
 import datetime
 
@@ -25,6 +22,8 @@ from conversation_thread import (
     get_symptom_data,
     get_medication_data,
 )
+
+from utils.agentic_helpers import display_workflow
 
 
 # Define the state schema for the conversation graph
@@ -73,13 +72,7 @@ def initialize_state(
         thread_id = configurable.get("thread_id")
         print(f"[INFO] Using thread_id from LangGraph configurable: {thread_id}")
 
-    # # Option 2: Check the module-level config
-    # # TODO: this global config is not thread-safe, need to be fixed in the future.
-    # elif "configurable" in config and "thread_id" in config["configurable"]:
-    #     thread_id = config["configurable"]["thread_id"]
-    #     print(f"[INFO] Using thread_id from module config: {thread_id}")
-
-    # Option 3: Generate a new thread ID if none was provided
+    # Option 2: Generate a new thread ID if none was provided
     if not thread_id:
         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
         thread_id = f"{timestamp}-{str(uuid.uuid4())[:8]}"
@@ -286,10 +279,14 @@ def extract_medication_labels(state: ConversationState) -> ConversationState:
             }
         else:
             # If no medication was extracted or the OCR failed
+            ai_response = (
+                "I couldn't extract any medication information from the uploaded image. "
+                "Please ensure the image is clear and contains readable medication label information."
+            )
             return {
                 **state,
                 "medication_state": processed_state,
-                "ai_response": "I couldn't identify medication information from the uploaded image. Please make sure the image is clear and contains readable medication label information.",
+                "ai_response": ai_response,
                 "current_action": "update_history",
             }
 
@@ -315,27 +312,8 @@ def check_symptom_context(state: ConversationState) -> str:
         return "generate_summary"
 
     # Check if user is uploading a medication label or if a filename is already set
-    # This handles both text commands and direct uploads via the Gradio interface
-    if (
-        "upload" in user_input.lower()
-        or "photo" in user_input.lower()
-        or "medication label" in user_input.lower()
-        or "process this medication" in user_input.lower()
-        or state.get("filename", "")
-    ):  # Check if a filename is already in state
-
-        # If this is from a direct file upload and we're just processing the command
-        if "process this medication label" in user_input.lower() and state.get(
-            "filename", ""
-        ):
-            return "prepare_medication_upload"
-
-        # If there's a user request to upload
-        if any(
-            term in user_input.lower()
-            for term in ["upload", "photo", "medication label"]
-        ):
-            return "prepare_medication_upload"
+    if "upload" in user_input.lower() and state.get("filename", ""):
+        return "prepare_medication_upload"
 
     # List of terms that might indicate symptom-related context
     # TODO: enhance the symptom indicators with knowledge-base or RAG.
@@ -377,38 +355,14 @@ def check_symptom_context(state: ConversationState) -> str:
         "symptoms",
     ]
 
-    # Add medication-related terms to check for medication context
-    medication_indicators = [
-        "medication",
-        "medicine",
-        "drug",
-        "prescription",
-        "pill",
-        "tablet",
-        "capsule",
-        "dose",
-        "pharmacy",
-        "prescribe",
-        "refill",
-    ]
-
     # Check if any symptom indicator is present in user input
     is_symptom_related = any(
         indicator in user_input.lower() for indicator in symptom_indicators
     )
 
-    # Check if any medication indicator is present but not about uploading
-    is_medication_related = any(
-        indicator in user_input.lower() for indicator in medication_indicators
-    ) and not any(term in user_input.lower() for term in ["upload", "photo", "label"])
-
     # Return the next node as a string, not a dict
     if is_symptom_related:
         return "extract_symptoms"
-    elif is_medication_related and state.get("extracted_medications"):
-        # If talking about medications and we have medication data, use generate_response
-        # The response generator will include medication information
-        return "generate_response"
     else:
         # If not symptom-related or medication-related, generate a response and skip extraction
         return "generate_response"
@@ -815,6 +769,7 @@ def chat(state: ConversationState) -> ConversationState:
         }
 
     # For initial greeting (no user input)
+    # TODO: deprecate the greeting prompt and use the hard-coded greeting message instead.
     greeting_prompt = ChatPromptTemplate.from_template(
         """You are a medical assistant designed to document symptoms.
         
@@ -924,69 +879,6 @@ def create_conversation_graph() -> StateGraph:
 conversation_graph = create_conversation_graph()
 
 
-# Visualize the workflow
-def display_workflow():
-    """Display the workflow as a Mermaid diagram."""
-    # Get the Mermaid markdown content directly
-    mermaid_code = conversation_graph.get_graph(xray=1).draw_mermaid()
-
-    # Save to a temporary file
-    temp_dir = tempfile.gettempdir()
-    mermaid_path = os.path.join(temp_dir, "workflow_diagram.mmd")
-    html_path = os.path.join(temp_dir, "workflow_diagram.html")
-
-    # Write the Mermaid markdown to the file
-    with open(mermaid_path, "w") as f:
-        f.write(mermaid_code)
-
-    # Create an HTML file with embedded Mermaid that works offline
-    html_content = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Workflow Diagram</title>
-        <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
-        <script>
-            mermaid.initialize({{ startOnLoad: true }});
-        </script>
-    </head>
-    <body>
-        <div class="mermaid">
-{mermaid_code}
-        </div>
-    </body>
-    </html>
-    """
-
-    with open(html_path, "w") as f:
-        f.write(html_content)
-
-    # Open the HTML file with the default web browser
-    print(f"Opening workflow diagram at: {html_path}")
-    try:
-        os.startfile(html_path)  # This works on Windows
-    except AttributeError:
-        # Fallback for non-Windows systems
-        try:
-            webbrowser.open(f"file://{html_path}")
-        except Exception as e:
-            print(f"Could not open the HTML file: {e}")
-            print(f"The diagram has been saved to: {mermaid_path}")
-            print(f"The HTML viewer has been saved to: {html_path}")
-
-    # Also print the Mermaid code to console for reference
-    print("\nMermaid diagram code:")
-    print(mermaid_code)
-
-    return mermaid_code
-
-
-# Set configuration with default values
-# TODO: remove this global config in the future.
-config = {"configurable": {"user_id": "default_user", "thread_id": None}}
-
-
-# Function to process user input
 def process_user_input(
     user_input: str,
     state: Optional[ConversationState] = None,
@@ -996,6 +888,7 @@ def process_user_input(
     """Process user input and return the AI response and updated state."""
 
     # Initialize state if not provided
+    # TODO: let's have a non-null state as requirement when using this function;
     if state is None:
         if thread_id is None:
             thread_id = create_new_thread(username)

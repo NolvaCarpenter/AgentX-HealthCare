@@ -17,7 +17,14 @@ class SymptomExtractor:
             """You are a medical assistant that identifies symptoms mentioned in patient statements.
             
             Extract all clinical symptoms mentioned in the following statement based solely on the facts provided, without making any assumptions.
-            Do NOT include severity descriptions (such as mild, severe, moderate) in the symptom names.
+            
+            Symptoms should:
+            1. Be specific medical conditions (like 'fever', 'cough', 'headache', 'nausea')
+            2. NOT include modifiers like 'mild', 'severe', 'worsening', etc. in the symptom name
+            3. NOT include contextual phrases like 'worsens at night' or 'after walking' as separate symptoms
+            4. NOT include common words or verbs like 'feel', 'pain', 'none' by themselves
+            5. NOT include temporal descriptions like 'daily', 'at night', 'after exercise'
+            
             Return only the base symptom names (e.g., "headache" not "severe headache") in a comma-separated list, with the primary symptom listed first.
             If no symptoms are mentioned, return "None".
             
@@ -34,12 +41,65 @@ class SymptomExtractor:
         response = self.extraction_chain.invoke({"user_input": user_input})
         symptoms_text = response.content.strip()
 
-        if symptoms_text.lower() == "none":
+        if "none" in symptoms_text.lower():
             return []
 
         # Split by comma and strip whitespace
         symptoms = [symptom.strip() for symptom in symptoms_text.split(",")]
-        return symptoms
+
+        # Validate symptoms to filter out non-symptoms
+        return self.validate_symptoms(symptoms)
+
+    def validate_symptoms(self, symptoms: List[str]) -> List[str]:
+        """Validate and filter symptoms to remove false positives."""
+        # Common words that should not be identified as symptoms by themselves
+        non_symptom_words = [
+            "none",
+            "feel",
+            "feels",
+            "feeling",
+            "felt",
+            "worsens",
+            "worsening",
+            "improves",
+            "improving",
+            "after",
+            "before",
+            "during",
+            "at",
+            "night",
+            "day",
+            "morning",
+        ]
+
+        # Phrases that indicate a symptom characteristic rather than a symptom
+        characteristic_patterns = [
+            "worsens",
+            "worsen",
+            "worse",
+            "better",
+            "improves",
+            "after",
+            "before",
+            "during",
+            "at night",
+            "at day",
+            "in the morning",
+        ]
+
+        validated_symptoms = []
+        for symptom in symptoms:
+            # Skip if the symptom is just a single non-symptom word
+            if symptom.lower() in non_symptom_words:
+                continue
+
+            # Skip if the symptom contains characteristic patterns
+            if any(pattern in symptom.lower() for pattern in characteristic_patterns):
+                continue
+
+            validated_symptoms.append(symptom)
+
+        return validated_symptoms
 
 
 class SymptomDetailExtractor:
