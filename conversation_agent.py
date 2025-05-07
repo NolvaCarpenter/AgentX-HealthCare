@@ -22,6 +22,8 @@ from conversation_thread import (
     save_message,
     save_symptom_data,
     save_medication_data,
+    get_symptom_data,
+    get_medication_data,
 )
 
 
@@ -71,11 +73,11 @@ def initialize_state(
         thread_id = configurable.get("thread_id")
         print(f"[INFO] Using thread_id from LangGraph configurable: {thread_id}")
 
-    # Option 2: Check the module-level config
-    # TODO: this global config is not thread-safe, need to be fixed in the future.
-    elif "configurable" in config and "thread_id" in config["configurable"]:
-        thread_id = config["configurable"]["thread_id"]
-        print(f"[INFO] Using thread_id from module config: {thread_id}")
+    # # Option 2: Check the module-level config
+    # # TODO: this global config is not thread-safe, need to be fixed in the future.
+    # elif "configurable" in config and "thread_id" in config["configurable"]:
+    #     thread_id = config["configurable"]["thread_id"]
+    #     print(f"[INFO] Using thread_id from module config: {thread_id}")
 
     # Option 3: Generate a new thread ID if none was provided
     if not thread_id:
@@ -102,6 +104,50 @@ def initialize_state(
         "medication_state": MedicationProcessState(),
         "extracted_medications": {},
     }
+
+
+def load_thread_state(thread_id: str, username: str) -> Dict[str, Any]:
+    """
+    Load the complete state for a given thread ID, including symptoms and medications data.
+
+    Args:
+        thread_id (str): The ID of the thread to load state for
+        username (str): The current username
+
+    Returns:
+        Dict[str, Any]: A complete conversation state with loaded symptom and medication data
+    """
+    # Initialize state with the proper username
+    state = initialize_state(username=username)
+    state["thread_id"] = thread_id
+
+    # Load symptom data from database
+    symptom_data = get_symptom_data(thread_id)
+    if symptom_data:
+        print(
+            f"Loaded symptom data for thread {thread_id}: {symptom_data.get('primary_symptoms', [])}"
+        )
+        symptom_state = SymptomState.model_validate(symptom_data)
+        state["symptom_state"] = symptom_state
+    else:
+        print(f"No symptom data found for thread {thread_id}")
+
+    # Load medication data from database
+    medication_data = get_medication_data(thread_id)
+    if medication_data:
+        print(
+            f"Loaded medication data for thread {thread_id}: {list(medication_data.keys())}"
+        )
+
+        # Convert medication data back to MedicationLabel objects
+        extracted_medications = {}
+        for drug_name, med_data in medication_data.items():
+            extracted_medications[drug_name] = MedicationLabel.model_validate(med_data)
+        state["extracted_medications"] = extracted_medications
+    else:
+        print(f"No medication data found for thread {thread_id}")
+
+    return state
 
 
 def prepare_medication_upload(state: ConversationState) -> ConversationState:
