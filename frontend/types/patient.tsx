@@ -69,7 +69,7 @@ export interface Patient {
   medications: Medication[];         // 현재 복용 중인 약물
   symptoms: Symptom[];               // 현재 증상
   past_medications?: Medication[];   // 과거 복용했던 약물
-  past_symptoms?: Symptom[];         // 과거 겪었던 증상/질병
+  past_symptoms?: SymptomDetail[];         // 과거 겪었던 증상/질병
   conditions?: string[];             // 진단된 질병 목록
   allergies?: string[];              // 알레르기 정보
   hospitalizations?: string[];       // 입원 이력 날짜 또는 설명

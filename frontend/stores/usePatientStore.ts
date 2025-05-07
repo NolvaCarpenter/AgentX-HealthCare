@@ -94,8 +94,49 @@ export const usePatientStore = create<PatientState>((set) => ({
         }
       }
     ],
-    past_medications: [],
-    past_symptoms: []
+    past_medications: [{
+      user_id: 'demo-p1',
+      recorded_datetime: '2024-04-01T10:00:00',
+      pharmacy_name: 'RX OUTREACH',
+      pharmacy_address: '3171 Riverport Tech Center Dr, Maryland Heights',
+      pharmacy_phone: '1-800-769-3880',
+      patient_name: 'hong',
+      patient_address: '1234 City Street, Seoul',
+      drug_name: 'METFORMIN HCL TAB 1000MG',
+      drug_strength: '1000MG',
+      drug_instructions: 'TAKE 1 TABLET BY MOUTH DAILY',
+      pill_markings: '2 71 OVAL WHITE TABLET',
+      manufacturer: 'ZYGENERICS',
+      ndc_upc: '68382003010',
+      rx_written_date: '2024-04-01',
+      discard_after: '2025-04-01',
+      federal_caution: 'FEDERAL LAW PROHIBITS TRANSFER...',
+      rx_number: '1099747',
+      refill_count: 3,
+      prescriber_name: 'Dr. A. Physician',
+      reorder_after: '2024-05-20',
+      qty_filled: 90,
+      location_code: '555-020201',
+      filled_date: '2024-04-03',
+      pharmacist: 'S. Barranco',
+      barcode: '234582134291'
+    }],
+    past_symptoms: [{
+      name: 'nausea',
+      onset_description: 'After headache onset',
+      onset_pattern: 'gradual',
+      characteristics: ['queasy'],
+      location: 'stomach',
+      quality: 'nauseating',
+      timing: 'intermittent',
+      context: 'especially after meals',
+      frequency: 'frequent',
+      severity: 6,
+      triggers: ['smell of food'],
+      aggravating_factors: ['movement'],
+      relieving_factors: ['rest'],
+      associated_symptoms: ['loss of appetite']
+    }]
   },
 
   setPatient: (p) => set({ patient: p }),
