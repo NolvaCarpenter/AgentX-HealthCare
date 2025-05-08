@@ -1,0 +1,77 @@
+[project]
+name = "baymax-team-collab"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Your Name",email = "you@example.com"}
+]
+readme = "README.md"
+requires-python = ">=3.10,<4.0"
+dependencies = [
+    "python-dotenv",
+    "annotated-types",
+    "anyio",
+    "asttokens",
+    "beautifulsoup4",
+    "certifi",
+    "charset-normalizer",
+    "colorama",
+    "decorator",
+    "distro",
+    "executing",
+    "h11",
+    "httpcore",
+    "httpx",
+    "idna",
+    "ipython-pygments-lexers",
+    "jedi",
+    "jiter",
+    "jsonpatch",
+    "jsonpointer",
+    "matplotlib-inline",
+    "openai",
+    "orjson",
+    "ormsgpack",
+    "packaging",
+    "parso",
+    "prompt-toolkit",
+    "pure-eval",
+    "pydantic",
+    "pydantic-core",
+    "pygments",
+    "pyyaml",
+    "regex",
+    "requests",
+    "requests-toolbelt",
+    "sniffio",
+    "soupsieve",
+    "stack-data",
+    "tenacity",
+    "tiktoken",
+    "tqdm",
+    "traitlets",
+    "typing-inspection",
+    "typing-extensions",
+    "urllib3",
+    "wcwidth",
+    "xxhash",
+    "zstandard",
+    "langchain-core",
+    "langchain-openai",
+    "langgraph",
+    "langgraph-checkpoint",
+    "langgraph-prebuilt",
+    "langgraph-sdk",
+    "langsmith",
+    "ipython",
+    "pytesseract"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+gradio = "^5.29.0"
+
