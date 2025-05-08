@@ -1,6 +1,14 @@
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
+from .symptom_synonyms import normalize_symptom
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("symptom_extraction")
 
 
 class SymptomExtractor:
@@ -37,18 +45,40 @@ class SymptomExtractor:
         self.extraction_chain = self.extract_symptoms_prompt | self.llm
 
     def extract_symptoms(self, user_input: str) -> List[str]:
-        """Extract symptoms from user input."""
+        """
+        Extract symptoms from user input with enhanced synonym and misspelling handling.
+
+        Args:
+            user_input: The user's natural language input describing symptoms
+
+        Returns:
+            List of standardized symptom terms
+        """
+        # Log the extraction attempt
+        logger.info(
+            f"Extracting symptoms from input: '{user_input[:50]}...' (truncated)"
+        )
+
         response = self.extraction_chain.invoke({"user_input": user_input})
         symptoms_text = response.content.strip()
 
         if "none" in symptoms_text.lower():
+            logger.info("No symptoms detected in response")
             return []
 
         # Split by comma and strip whitespace
-        symptoms = [symptom.strip() for symptom in symptoms_text.split(",")]
+        raw_symptoms = [symptom.strip() for symptom in symptoms_text.split(",")]
+        logger.info(f"Raw extracted symptoms: {raw_symptoms}")
+
+        # Normalize symptoms (handle synonyms and misspellings)
+        normalized_symptoms = [normalize_symptom(symptom) for symptom in raw_symptoms]
+        logger.info(f"Normalized symptoms: {normalized_symptoms}")
 
         # Validate symptoms to filter out non-symptoms
-        return self.validate_symptoms(symptoms)
+        valid_symptoms = self.validate_symptoms(normalized_symptoms)
+        logger.info(f"Final validated symptoms: {valid_symptoms}")
+
+        return valid_symptoms
 
     def validate_symptoms(self, symptoms: List[str]) -> List[str]:
         """Validate and filter symptoms to remove false positives."""
@@ -170,14 +200,31 @@ class SymptomDetailExtractor:
         # Create duration extraction chain
         self.duration_extraction_chain = self.extract_duration_prompt | self.llm
 
-        # Prompt for extracting list-type fields
+        # Enhanced prompt for extracting list-type fields with medical knowledge integration
         self.extract_list_prompt = ChatPromptTemplate.from_template(
-            """You are a medical assistant that extracts specific details about symptoms from patient statements.
+            """You are a medical assistant with extensive knowledge from medical resources like Mayo Clinic and MedlinePlus.
             
             Extract the {detail_type} for the symptom "{symptom_name}" from the following statement.
-            Return the results as a JSON list of strings. If none are mentioned, return an empty list.
+            
+            If extracting characteristics:
+            - Include descriptive qualities like sharp, dull, burning, throbbing, etc.
+            - Consider standard medical descriptors for this symptom
+            
+            If extracting aggravating_factors:
+            - Include activities, positions, foods, or contexts that make the symptom worse
+            
+            If extracting relieving_factors:
+            - Include activities, positions, medications, or contexts that make the symptom better
+            
+            If extracting triggers:
+            - Include specific events, foods, activities, or contexts that seem to cause the symptom
+            
+            If extracting associated_symptoms:
+            - Include any other symptoms that occur alongside this primary symptom
             
             Patient statement: {user_input}
+            
+            Return your findings as a JSON list of strings. If none are mentioned, return an empty list.
             
             {detail_type} for {symptom_name} (as JSON list):"""
         )
@@ -189,6 +236,9 @@ class SymptomDetailExtractor:
         self, symptom_name: str, detail_type: str, user_input: str
     ) -> Any:
         """Extract a specific detail for a symptom from user input."""
+        # Log the extraction attempt
+        logger.info(f"Extracting {detail_type} for '{symptom_name}' from user input")
+
         if detail_type == "severity":
             return self.extract_severity(symptom_name, user_input)
         elif detail_type == "start_date" or detail_type == "is_ongoing":
@@ -211,7 +261,9 @@ class SymptomDetailExtractor:
                 }
             )
             detail_text = response.content.strip()
-            return None if detail_text.lower() == "none" else detail_text
+            result = None if detail_text.lower() == "none" else detail_text
+            logger.info(f"Extracted {detail_type}: {result}")
+            return result
 
     def extract_severity(self, symptom_name: str, user_input: str) -> Dict:
         """Extract severity information for a symptom."""
@@ -230,9 +282,12 @@ class SymptomDetailExtractor:
             else:
                 # For testing with mocks
                 return {"level": 7, "description": "Throbbing pain"}
+
+            logger.info(f"Extracted severity for {symptom_name}: {severity_data}")
             return severity_data
         except json.JSONDecodeError:
             # Fallback if JSON parsing fails
+            logger.warning(f"Failed to parse severity JSON for {symptom_name}")
             return {"level": None, "description": None}
 
     def extract_duration(self, symptom_name: str, user_input: str) -> Dict:
@@ -262,9 +317,12 @@ class SymptomDetailExtractor:
                     "end_date": None,
                     "is_ongoing": True,
                 }
+
+            logger.info(f"Extracted duration for {symptom_name}: {duration_data}")
             return duration_data
         except json.JSONDecodeError:
             # Fallback if JSON parsing fails
+            logger.warning(f"Failed to parse duration JSON for {symptom_name}")
             return {"start_date": None, "end_date": None, "is_ongoing": None}
 
     def extract_list_detail(
@@ -289,7 +347,11 @@ class SymptomDetailExtractor:
             else:
                 # For testing with mocks
                 return ["bright light", "noise", "stress"]
-            return list_data if isinstance(list_data, list) else []
+
+            result = list_data if isinstance(list_data, list) else []
+            logger.info(f"Extracted {detail_type} for {symptom_name}: {result}")
+            return result
         except json.JSONDecodeError:
             # Fallback if JSON parsing fails
+            logger.warning(f"Failed to parse {detail_type} JSON for {symptom_name}")
             return []

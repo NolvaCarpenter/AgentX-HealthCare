@@ -1,11 +1,13 @@
+import re
+import uuid
+import datetime
+
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 from langgraph.graph import StateGraph, END
 from typing import Dict, List, Any, TypedDict, Optional, Tuple, Literal
-import uuid
-import datetime
 
 from symptoms.symptom_state import SymptomState, SymptomDetail, Severity, Duration
 from symptoms.symptom_extraction import SymptomExtractor, SymptomDetailExtractor
@@ -22,8 +24,9 @@ from conversation_thread import (
     get_symptom_data,
     get_medication_data,
 )
+import logging
 
-from utils.agentic_helpers import display_workflow
+from utils.display_helpers import display_workflow
 
 
 # Define the state schema for the conversation graph
@@ -37,6 +40,7 @@ class ConversationState(TypedDict):
     symptom_state: SymptomState
     extracted_symptoms: Dict[str, SymptomDetail]
     missing_fields: List[str]
+    follow_up_count: int  # Counter for follow-up questions about current symptom
     filename: str
     medication_state: MedicationProcessState
     extracted_medications: Dict[str, MedicationLabel]
@@ -52,6 +56,8 @@ detail_extractor = SymptomDetailExtractor()
 # Configuration constants
 MAX_MISSING_FIELDS_TO_ASK = 2  # Maximum number of missing fields to ask about at once
 MAX_CHAT_HISTORY_LENGTH = 5  # Maximum number of chat history messages to keep
+MAX_FOLLOW_UP_QUESTIONS = 3
+SYMPTOM_COMPLETION_THRESHOLD = 0.4
 
 
 # Define the nodes for the conversation graph
@@ -93,6 +99,7 @@ def initialize_state(
         "symptom_state": SymptomState(),
         "extracted_symptoms": {},
         "missing_fields": [],
+        "follow_up_count": 0,
         "filename": "",
         "medication_state": MedicationProcessState(),
         "extracted_medications": {},
@@ -300,76 +307,48 @@ def extract_medication_labels(state: ConversationState) -> ConversationState:
 
 
 def check_symptom_context(state: ConversationState) -> str:
-    """Check if user input contains symptom-related context and return the next node."""
+    """
+    Function to detect symptom-related context in user input with improved accuracy,
+    handling synonyms, layman terms, and contextual phrases.
+    """
+    from symptoms.symptom_synonyms import LAYMAN_TO_STANDARD
+
+    # Configure logging
+    logger = logging.getLogger("conversation_agent.check_symptom_context")
+
     user_input = state["user_input"]
+    user_input = user_input.lower() if user_input else ""
 
     # For initial greeting, go directly to generate_response
     if not user_input:
         return "generate_response"
 
     # Check if user is requesting a summary
-    if "summary" in user_input.lower() or "summarize" in user_input.lower():
+    if re.search(r"\b(summarize|recap)\b", user_input):
+        logger.info("Summary request detected")
         return "generate_summary"
 
     # Check if user is uploading a medication label or if a filename is already set
-    if "upload" in user_input.lower() and state.get("filename", ""):
+    if (
+        "upload" in user_input
+        or "medication" in user_input
+        or "medicine" in user_input
+        or "prescription" in user_input
+    ) and state.get("filename", ""):
+        logger.info("Medication upload context detected")
         return "prepare_medication_upload"
 
-    # List of terms that might indicate symptom-related context
-    # TODO: enhance the symptom indicators with knowledge-base or RAG.
-    symptom_indicators = [
-        "pain",
-        "ache",
-        "hurt",
-        "sore",
-        "discomfort",
-        "fever",
-        "temperature",
-        "cough",
-        "cold",
-        "flu",
-        "headache",
-        "migraine",
-        "nausea",
-        "vomit",
-        "dizzy",
-        "tired",
-        "fatigue",
-        "exhaust",
-        "weak",
-        "symptom",
-        "feel",
-        "felt",
-        "feeling",
-        "experiencing",
-        "suffering",
-        "sick",
-        "ill",
-        "unwell",
-        "doctor",
-        "hospital",
-        "medicine",
-        "treatment",
-        "condition",
-        "severity",
-        "symptoms",
-    ]
-
-    # Check if any symptom indicator is present in user input
-    is_symptom_related = any(
-        indicator in user_input.lower() for indicator in symptom_indicators
-    )
-
-    # Return the next node as a string, not a dict
-    if is_symptom_related:
-        return "extract_symptoms"
-    else:
-        # If not symptom-related or medication-related, generate a response and skip extraction
-        return "generate_response"
+    # default to symptom extraction if no specific context is detected
+    # TODO: potentially optimze workflow to avoid unnecessary symptom extraction
+    return "extract_symptoms"
 
 
 def extract_symptoms(state: ConversationState) -> ConversationState:
     """Extract symptoms from user input."""
+
+    # Configure logging
+    logger = logging.getLogger("conversation_agent.extract_symptoms")
+
     user_input = state["user_input"]
 
     if not user_input:
@@ -383,6 +362,8 @@ def extract_symptoms(state: ConversationState) -> ConversationState:
     for symptom in symptom_list:
         extracted_symptoms[symptom] = {}
 
+    logger.info(f"Extracted symptoms: {extracted_symptoms}")
+
     # Update state
     return {
         **state,
@@ -395,32 +376,16 @@ def process_symptoms(state: ConversationState) -> ConversationState:
     """Process extracted symptoms and add them to the symptom state."""
     symptom_state = state["symptom_state"]
     extracted_symptoms = state["extracted_symptoms"]
-    processed_symptoms = {}
 
     # Add each extracted symptom to the symptom state
     for symptom in extracted_symptoms.keys():
-        # symptom_state.add_symptom(symptom)
-
-        # Track original symptom name before adding (it might be merged with a similar one)
-        original_symptom = symptom
-        similar_found, similar_symptom = symptom_state.find_similar_symptom(symptom)
-
-        # Add symptom - will use existing one if similar found
         symptom_state.add_symptom(symptom)
-
-        # Store the proper key to use for this symptom
-        actual_symptom = similar_symptom if similar_found else symptom
-
-        # Copy any details from the extracted symptom to the processed symptom dictionary
-        # using the actual symptom name (which might be different if a similar one was found)
-        if original_symptom in extracted_symptoms:
-            processed_symptoms[actual_symptom] = extracted_symptoms[original_symptom]
 
     # Update state with processed symptoms that match the keys in symptom_state
     return {
         **state,
         "symptom_state": symptom_state,
-        "extracted_symptoms": processed_symptoms,
+        "extracted_symptoms": extracted_symptoms,
         "current_action": "extract_details",
     }
 
@@ -434,9 +399,9 @@ def extract_details(state: ConversationState) -> ConversationState:
     # Get missing fields to extract from state
     missing_fields = state.get("missing_fields", [])
 
-    # If no current symptom, select one
-    if not symptom_state.current_symptom and symptom_state.primary_symptoms:
-        symptom_state.current_symptom = symptom_state.primary_symptoms[0]
+    # # If no current symptom, select one
+    # if not symptom_state.current_symptom and symptom_state.primary_symptoms:
+    #     symptom_state.current_symptom = symptom_state.primary_symptoms[0]
 
     # If no symptoms or current_symptom is None, skip detail extraction
     if not symptom_state.primary_symptoms or not symptom_state.current_symptom:
@@ -526,17 +491,26 @@ def update_symptom_details(state: ConversationState) -> ConversationState:
             # If symptom not found, skip update
             pass
 
+    # Increment the follow-up counter since we just processed a question
+    follow_up_count = state.get("follow_up_count", 0) + 1
+
     # Update state
     return {
         **state,
         "symptom_state": symptom_state,
+        "follow_up_count": follow_up_count,
         "current_action": "determine_next_action",
     }
 
 
 def determine_next_action(state: ConversationState) -> ConversationState:
     """Determine the next action based on the current state."""
+
+    # Configure logging
+    logger = logging.getLogger("conversation_agent.determine_next_action")
+
     symptom_state = state["symptom_state"]
+    follow_up_count = state.get("follow_up_count", 0)
 
     # If no symptoms, generate response
     if not symptom_state.primary_symptoms:
@@ -550,6 +524,35 @@ def determine_next_action(state: ConversationState) -> ConversationState:
             return {**state, "current_action": "generate_response"}
 
     current_symptom = symptom_state.current_symptom
+
+    # Check if all symptom details are documented
+    all_symptoms_documented = symptom_state.is_symptom_tracking_completed(
+        SYMPTOM_COMPLETION_THRESHOLD
+    )
+
+    logger.info(
+        f"All symptoms documented: {all_symptoms_documented}, current symptom: {current_symptom}"
+    )
+
+    if all_symptoms_documented:
+        # If all symptoms are documented, suggest sharing with healthcare provider
+        return {
+            **state,
+            "symptom_state": symptom_state,
+            "current_action": "generate_healthcare_recommendation",
+        }
+
+    # Check if we should rotate to the next symptom
+    # Rotate if:
+    # 1. We've asked enough follow-up questions OR
+    # 2. The current symptom is sufficiently documented (reached threshold percentage)
+    should_rotate = follow_up_count >= MAX_FOLLOW_UP_QUESTIONS
+
+    if should_rotate:
+        # Rotate to next symptom and reset follow-up counter
+        symptom_state.rotate_current_symptom()
+        follow_up_count = 0
+        current_symptom = symptom_state.current_symptom
 
     # Check if there are missing fields for the current symptom
     try:
@@ -565,11 +568,13 @@ def determine_next_action(state: ConversationState) -> ConversationState:
             **state,
             "symptom_state": symptom_state,
             "missing_fields": top_missing_fields,
+            "follow_up_count": follow_up_count,
             "current_action": "generate_question",
         }
     else:
         # No missing fields for current symptom, rotate to next symptom
         symptom_state.rotate_current_symptom()
+        follow_up_count = 0
 
         # Check if the new current symptom has missing fields
         if symptom_state.current_symptom:
@@ -581,6 +586,7 @@ def determine_next_action(state: ConversationState) -> ConversationState:
                     **state,
                     "symptom_state": symptom_state,
                     "missing_fields": new_missing_fields,
+                    "follow_up_count": follow_up_count,
                     "current_action": "generate_question",
                 }
 
@@ -588,12 +594,21 @@ def determine_next_action(state: ConversationState) -> ConversationState:
         return {
             **state,
             "symptom_state": symptom_state,
+            "follow_up_count": follow_up_count,
             "current_action": "generate_response",
         }
 
 
 def generate_question(state: ConversationState) -> ConversationState:
-    """Generate a question about top N missing fields."""
+    """
+    Generate context-aware, medically-informed questions about missing symptom details.
+    The questions are tailored based on the specific symptom and what details are missing.
+    """
+    from symptoms.medical_knowledge import get_follow_up_questions
+
+    # Configure logging
+    logger = logging.getLogger("conversation_agent.questions")
+
     symptom_state = state["symptom_state"]
     missing_fields = state.get("missing_fields", [])
 
@@ -607,22 +622,65 @@ def generate_question(state: ConversationState) -> ConversationState:
 
     current_symptom = symptom_state.current_symptom
 
-    # Format the missing fields as a comma-separated list
-    missing_fields_str = ", ".join(missing_fields)
+    # For tracking QA metrics
+    qa_metrics = {
+        "symptom": current_symptom,
+        "missing_fields": missing_fields,
+        "question_type": (
+            "follow_up" if state.get("follow_up_count", 0) > 0 else "initial"
+        ),
+    }
 
-    # Define the question prompt
+    # Get medically-appropriate follow-up questions from our knowledge base
+    suggested_questions = []
+    for field in missing_fields[:MAX_MISSING_FIELDS_TO_ASK]:
+        field_questions = get_follow_up_questions(current_symptom, field)
+        if field_questions:
+            suggested_questions.append(
+                field_questions[0]
+            )  # Take the first question for each field
+
+    # Format suggested questions as string examples
+    suggested_questions_str = "\n".join([f"- {q}" for q in suggested_questions])
+
+    # Format the missing fields as a comma-separated list
+    missing_fields_str = ", ".join(missing_fields[:MAX_MISSING_FIELDS_TO_ASK])
+
+    # Check previously asked questions to avoid repetition
+    previous_questions = []
+    for message in state["chat_history"][-10:]:  # Look at last 10 messages
+        if message["role"] == "assistant" and "?" in message["content"]:
+            previous_questions.append(message["content"])
+
+    previous_questions_str = "\n".join(
+        [f"- {q}" for q in previous_questions[-3:]]
+    )  # Last 3 questions
+
+    # Define the question prompt with medical knowledge integration
     question_prompt = ChatPromptTemplate.from_template(
-        """You are a medical assistant conducting a symptom assessment. 
-        You need to ask about the {missing_fields_str} for the symptom "{symptom}".
+        """You are a medical assistant conducting a symptom assessment with expertise from Mayo Clinic and MedlinePlus guidelines.
         
-        Ask a clear, specific question in a natural, empathetic tone.
-        Structure your question concise and focused only on {missing_fields_str}.
-        So that the user can understand what information you need.
+        Current symptom: "{symptom}"
+        Missing information: {missing_fields_str}
         
-        Previous conversation:
+        Based on medical knowledge, here are suggested questions for this symptom and missing information:
+        {suggested_questions}
+        
+        Previous questions you've asked (avoid repeating these):
+        {previous_questions}
+        
+        Previous conversation context:
         {chat_history}
         
-        Your question about the {missing_fields_str} for {symptom}:"""
+        Create ONE focused, medically accurate follow-up question in layman terms about the {missing_fields_str} for {symptom}.
+        Your question should be:
+        1. Concise (one or two sentences max)
+        2. Specific to the symptom and missing field(s)
+        3. Factual and never speculative
+        4. Natural and empathetic in tone
+        5. Different from questions you've already asked
+        
+        Your well-formed medical question:"""
     )
 
     # Format chat history for the prompt
@@ -635,13 +693,26 @@ def generate_question(state: ConversationState) -> ConversationState:
         ]
     )
 
-    # Generate the questions
+    # Generate the question using the LLM
     response = llm.invoke(
         question_prompt.format(
             missing_fields_str=missing_fields_str,
             symptom=current_symptom,
             chat_history=chat_history_text,
+            suggested_questions=suggested_questions_str,
+            previous_questions=previous_questions_str,
         )
+    )
+
+    response.content = response.content.strip("\"'")
+    qa_metrics["generated_question"] = response.content
+    qa_metrics["completeness_score"] = len(missing_fields) / 8  # Simple metric
+
+    # Log the question generation for evaluation
+    logger.info(
+        f"\nGenerated question for {current_symptom}: {response.content}"
+        f"\nMissing fields: {missing_fields_str}, "
+        f"and completeness score: {qa_metrics['completeness_score']}"
     )
 
     # Update state
@@ -649,21 +720,40 @@ def generate_question(state: ConversationState) -> ConversationState:
         **state,
         "ai_response": response.content,
         "current_action": "update_history",
+        "qa_metrics": qa_metrics,  # Store metrics for evaluation
     }
 
 
 def generate_response(state: ConversationState) -> ConversationState:
-    """Generate a general response."""
+    """
+    Generate a factual, concise medical response based on validated information
+    from trusted medical knowledge sources.
+    """
+    from utils.medical_fact_checker import (
+        validate_medical_response,
+        check_response_quality,
+    )
+
+    # Configure logging
+    logger = logging.getLogger("conversation_agent.response")
+
     if not state["user_input"]:
         return {**state, "current_action": "update_history"}
 
     # Get relevant state components
     extracted_symptoms = state.get("extracted_symptoms", {})
     extracted_medications = state.get("extracted_medications", {})
+    symptom_state = state.get("symptom_state")
 
-    # Define the response prompt
+    # Prepare symptom context for fact checking
+    symptom_context = {
+        "current_symptom": symptom_state.current_symptom if symptom_state else None,
+        "primary_symptoms": symptom_state.primary_symptoms if symptom_state else [],
+    }
+
+    # Define the enhanced response prompt with medical fact guidelines
     response_prompt = ChatPromptTemplate.from_template(
-        """You are a medical assistant conducting a symptom assessment.
+        """You are a medical assistant conducting a symptom assessment, adhering strictly to clinical guidelines.
         
         Current symptoms being tracked: {symptoms}
         
@@ -674,24 +764,30 @@ def generate_response(state: ConversationState) -> ConversationState:
         
         User's latest message: {user_input}
         
-        Respond in a natural, empathetic tone. If the user has mentioned symptoms, acknowledge them.
-        If symptoms and medications are both present, discuss potential connections between them.
-        If medications are present without symptoms, ask if they're taking the medication for specific symptoms.
-        If no symptoms or medications have been mentioned yet, ask the user what symptoms they're experiencing.
+        STRICT GUIDELINES FOR YOUR RESPONSE:
+        1. MAXIMUM LENGTH: Three concise sentences per point; no verbose explanations
+        2. FACTUAL ONLY: Do not speculate about diagnoses or treatments
+        3. MEDICALLY VALIDATED: Only include information verified by clinical guidelines
+        4. NO URGENT MEDICAL ADVICE: For chest pain, difficulty breathing, severe symptoms always advise seeking immediate medical attention
+        5. CLEAR BOUNDARIES: For complex medical questions, suggest consulting a healthcare professional
         
-        After gathering symptom details and medications have not been mentioned yet:
-        - Suggest they upload a medication label by saying "You can upload a photo of your medication label"
-        - Or ask "Could you tell me about any medications you're currently taking?"
+        If symptoms mentioned:
+        - Acknowledge them with factual information
+        - Do NOT suggest possible diagnoses
+        - Focus on gathering more specific details
         
-        Keep your response concise and focused.
+        If symptoms and medications both present:
+        - Factually acknowledge potential connections without speculation
         
-        Your response:"""
+        Keep the response direct, concise, and factual.
+        
+        Your factual, concise response (max 2-3 sentences):"""
     )
-
     # Format symptoms and chat history for the prompt
     symptoms_text = (
         ", ".join(extracted_symptoms.keys()) if extracted_symptoms else "None"
-    )  # Format medication information for the prompt
+    )
+    # Format medication information for the prompt
     medication_details = []
     if extracted_medications:
         for drug_name, medication in extracted_medications.items():
@@ -715,7 +811,7 @@ def generate_response(state: ConversationState) -> ConversationState:
         ]
     )
 
-    # Generate the response
+    # Generate the initial response
     response = llm.invoke(
         response_prompt.format(
             symptoms=symptoms_text,
@@ -725,11 +821,40 @@ def generate_response(state: ConversationState) -> ConversationState:
         )
     )
 
-    # Update state
+    # Validate and improve the response using medical fact checker
+    passed, validated_response, quality_metrics = check_response_quality(
+        response.content, symptom_context
+    )
+
+    if not passed:
+        logger.warning(f"Response failed quality check: {quality_metrics['issues']}")
+
+        # Ensure the response is concise (max 2 sentences)
+        validated_response = validate_medical_response(
+            validated_response, max_sentences=2
+        )
+
+        logger.info("Applied medical fact validation to response")
+
+    # Log metrics for evaluation
+    response_metrics = {
+        "original_length": len(response.content),
+        "validated_length": len(validated_response),
+        "quality_score": quality_metrics["overall_quality"],
+        "issues": quality_metrics["issues"],
+    }
+
+    logger.info(
+        f"Response metrics: {response_metrics['original_length']} -> {response_metrics['validated_length']} characters, "
+        f"Quality score: {response_metrics['quality_score']}, Issues: {response_metrics['issues']}"
+    )
+
+    # Update state with the validated response and metrics
     return {
         **state,
-        "ai_response": response.content,
+        "ai_response": validated_response,
         "current_action": "update_history",
+        "response_metrics": response_metrics,
     }
 
 
@@ -809,6 +934,55 @@ def update_history(state: ConversationState) -> ConversationState:
     return {**state, "chat_history": chat_history, "current_action": END}
 
 
+def generate_healthcare_recommendation(state: ConversationState) -> ConversationState:
+    """Generate a response recommending sharing symptoms with healthcare provider."""
+    # Configure logging
+    logger = logging.getLogger(__name__ + ".generate_healthcare_recommendation")
+
+    symptom_state = state["symptom_state"]
+
+    # Create a symptom summary
+    symptom_summary = symptom_state.get_session_summary()
+
+    # Define the healthcare recommendation prompt
+    healthcare_prompt = ChatPromptTemplate.from_template(
+        """You are a medical assistant helping collect symptom information.
+        
+        The user has provided sufficient information about their symptoms. 
+        Now you should suggest they share this information with their healthcare provider.
+        
+        Here's a summary of the symptoms they've described:
+        
+        {symptom_summary}
+        
+        Create a response that:
+        1. Thanks the user for providing detailed information
+        2. Summarizes the key symptoms they've reported
+        3. Suggests they share this information with their healthcare provider
+        4. Reminds them this is not a diagnosis
+        5. Asks if they would like any clarification or have other questions
+        
+        Keep your response concise, empathetic and professional:
+        """
+    )
+
+    # Generate the response using the LLM
+    chain = healthcare_prompt | llm
+    response = chain.invoke({"symptom_summary": symptom_summary})
+
+    # Log the healthcare recommendation response
+    logger.info(
+        f"Generated healthcare recommendation: {response.content[:100]}... (truncated)"
+    )
+
+    # Return the updated state with the healthcare recommendation
+    return {
+        **state,
+        "ai_response": response.content,
+        "current_action": "update_history",
+    }
+
+
 # Create the conversation graph
 def create_conversation_graph() -> StateGraph:
     """Create the conversation graph."""
@@ -826,6 +1000,9 @@ def create_conversation_graph() -> StateGraph:
     workflow.add_node("generate_summary", generate_summary)
     workflow.add_node("prepare_medication_upload", prepare_medication_upload)
     workflow.add_node("extract_medication_labels", extract_medication_labels)
+    workflow.add_node(
+        "generate_healthcare_recommendation", generate_healthcare_recommendation
+    )
     workflow.add_node("update_history", update_history)
     # Add edges between nodes
     workflow.add_conditional_edges(
@@ -849,6 +1026,7 @@ def create_conversation_graph() -> StateGraph:
         {
             "generate_question": "generate_question",
             "generate_response": "generate_response",
+            "generate_healthcare_recommendation": "generate_healthcare_recommendation",
         },
     )
 
@@ -856,6 +1034,7 @@ def create_conversation_graph() -> StateGraph:
     workflow.add_edge("generate_question", "update_history")
     workflow.add_edge("generate_response", "update_history")
     workflow.add_edge("generate_summary", "update_history")
+    workflow.add_edge("generate_healthcare_recommendation", "update_history")
     workflow.add_edge("extract_medication_labels", "update_history")
 
     # Add conditional edges from prepare_medication_upload based on current_action
@@ -886,29 +1065,6 @@ def process_user_input(
     username: str = "default_user",
 ) -> Tuple[str, ConversationState]:
     """Process user input and return the AI response and updated state."""
-
-    # Initialize state if not provided
-    # TODO: let's have a non-null state as requirement when using this function;
-    if state is None:
-        if thread_id is None:
-            thread_id = create_new_thread(username)
-
-        # Initialize state with the configurable parameter and username
-        graph_configurable = {
-            "thread_id": thread_id,
-            "user_id": username,
-        }
-
-        state = initialize_state(configurable=graph_configurable, username=username)
-
-        # Run the graph to get the greeting with the configurable
-        graph_config = {"configurable": graph_configurable}
-        state = conversation_graph.invoke(state, graph_config)
-
-        if state["ai_response"]:
-            save_message(thread_id, "assistant", state["ai_response"])
-
-        return state["ai_response"], state
 
     # Use the thread_id from the state if not explicitly provided
     if thread_id is None and "thread_id" in state:

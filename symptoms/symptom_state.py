@@ -9,8 +9,8 @@ class Severity(BaseModel):
 
 
 class Duration(BaseModel):
-    start_date: Optional[str] = None  # ISO format string "YYYY-MM-DDTHH:MM:SS"
-    end_date: Optional[str] = None  # ISO format string "YYYY-MM-DDTHH:MM:SS"
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
     is_ongoing: Optional[bool] = None
 
 
@@ -144,11 +144,10 @@ class SymptomState(BaseModel):
         self.symptom_details[symptom_name] = updated_detail
 
     def missing_fields(self, symptom_name: str) -> List[str]:
-        """Identify missing fields for follow-up"""
-        # This function checks if certain fields are missing in the symptom details
-        # and returns a list of those fields.
-        # The fields checked are severity, duration, characteristics, aggravating_factors, and relieving_factors.
-
+        """
+        This function checks if certain fields are missing in the symptom details
+        for a given symptom name.
+        """
         if symptom_name not in self.primary_symptoms:
             raise ValueError(f"Symptom '{symptom_name}' not found in primary symptoms.")
         missing = []
@@ -158,7 +157,7 @@ class SymptomState(BaseModel):
                 missing.append("severity")
             if not detail.duration or detail.duration.start_date is None:
                 missing.append("start_date")
-            if detail.duration and detail.duration.is_ongoing is None:
+            if not detail.duration or detail.duration.is_ongoing is None:
                 missing.append("is_ongoing")
             if not detail.characteristics:
                 missing.append("characteristics")
@@ -201,6 +200,60 @@ class SymptomState(BaseModel):
                 self.current_symptom = self.primary_symptoms[0]
             else:
                 self.current_symptom = None
+
+    def get_symptom_filled_rate(self, symptom_name: str) -> float:
+        """
+        Calculate the percentage of fields that are filled for a symptom.
+
+        Args:
+            symptom_name (str): The symptom name to check
+
+        Returns:
+            float: Percentage of fields that are filled (0.0 to 1.0)
+        """
+        if symptom_name not in self.primary_symptoms:
+            raise ValueError(f"Symptom '{symptom_name}' not found in primary symptoms.")
+
+        # Get the total number of fields we track
+        all_fields = [
+            "severity",
+            "start_date",
+            "is_ongoing",
+            "characteristics",
+            "aggravating_factors",
+            "relieving_factors",
+            "frequency",
+            "intensity",
+            "triggers",
+            "associated_symptoms",
+        ]
+        total_fields = len(all_fields)
+
+        # Get the missing fields
+        missing = self.missing_fields(symptom_name)
+
+        # Return percentage (0.0 to 1.0)
+        return (total_fields - len(missing)) / total_fields
+
+    def is_symptom_tracking_completed(self, threshold: float = 0.5) -> bool:
+        """
+        Check if all symptoms are documented at or above the specified threshold.
+
+        Args:
+            threshold (float): The threshold percentage (0.0 to 1.0) that determines
+                            if a symptom is sufficiently documented
+
+        Returns:
+            bool: True if all symptoms are documented at or above the threshold, False otherwise
+        """
+        if not self.primary_symptoms:
+            return False
+
+        for symptom in self.primary_symptoms:
+            if self.get_symptom_filled_rate(symptom) < threshold:
+                return False
+
+        return True
 
     def get_symptom_summary(self, symptom_name: str) -> str:
         """Get a summary of a symptom's details in a human-readable format."""

@@ -86,7 +86,6 @@ def process_medication_upload(file_obj, chat_history, state, thread_id, username
 
     # Validate the file
     valid_filename, message = validate_medication_image(temp_path)
-    # Add user message to chat history (text only)
     display_message = f"I'm uploading a medication label:"
 
     # Convert the image to a data URL for direct display - only for UI
@@ -210,15 +209,16 @@ def respond(message, chat_history, state, thread_id, username):
     yield message, chat_history, state, "", thread_id, "", username
 
     # Process the message
-    print(f"Processing message: {message}")
-    print(f"Current state: {state}")
-    print(f"Using username: {username}")
+    print(f"User message: {message}")
+    # print(f"Current state: {state}")
+    # print(f"Using username: {username}")
 
     response, updated_state = process_user_input(message, state, thread_id, username)
 
     chat_history.append({"role": "assistant", "content": response})
     symptom_summary = format_symptom_summary(updated_state)
 
+    print(f"AI response: {response}")
     # Update thread summary
     thread_summary = get_thread_summary(thread_id)
     thread_display = f"## Active Thread\n\n{thread_summary}"
@@ -257,7 +257,7 @@ with gr.Blocks(
             with gr.Column(scale=2):
                 chatbot = gr.Chatbot(
                     label="Conversation",
-                    height=500,
+                    height=600,
                     show_copy_button=True,
                     elem_classes=["gr-box", "gr-chatbox"],
                     type="messages",
