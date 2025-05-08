@@ -64,7 +64,7 @@ dependencies = [
     "langgraph-sdk",
     "langsmith",
     "ipython",
-    "pytesseract"
+    "pytesseract",
 ]
 
 
@@ -72,6 +72,10 @@ dependencies = [
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
+[tool.poetry]
+package-mode = false
+
 [tool.poetry.group.dev.dependencies]
 gradio = "^5.29.0"
+pygraphviz = "^1.14"
 
