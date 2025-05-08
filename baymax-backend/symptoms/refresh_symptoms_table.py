@@ -1,6 +1,7 @@
+import os
 import sqlite3
 
-DB_PATH = "baymax_agentx_health.db"
+DB_PATH = os.getenv("DB_PATH")
 
 
 def refresh_tables():

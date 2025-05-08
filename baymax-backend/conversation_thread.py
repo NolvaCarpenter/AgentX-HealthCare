@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 
+import os
 import sqlite3
 import uuid
 import datetime
 from typing import Dict, List, Optional, Any
 
 # Database path
-DB_PATH = "baymax_agentx_health.db"
+DB_PATH = os.getenv("DB_PATH")
 
 
 def create_conversation_tables():

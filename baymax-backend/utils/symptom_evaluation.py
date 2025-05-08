@@ -21,13 +21,15 @@ logger = logging.getLogger("symptom_evaluation")
 class SymptomEvaluationLogger:
     """Logger for evaluating symptom extraction and follow-up question quality."""
 
-    def __init__(self, db_path: str = "baymax_agentx_health.db"):
+    def __init__(self, db_path):
         """
         Initialize the logger with a database connection.
 
         Args:
             db_path: Path to the SQLite database
         """
+        if not db_path:
+            db_path = os.getenv("DB_PATH")
         self.db_path = db_path
         self._ensure_tables()
 

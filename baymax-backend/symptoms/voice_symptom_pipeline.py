@@ -14,7 +14,7 @@ if not os.getenv("OPENAI_API_KEY"):
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 audio_dir = "data/patient_conversations"
-db_path = "baymax_agentx_health.db"
+db_path = os.getenv("DB_PATH")
 
 
 def process_voice_input():
@@ -281,7 +281,10 @@ def process_audio_to_symptoms_and_summary(audio_path, patient_id="Unknown"):
     }
 
 
-def store_results_in_sqlite(results, db_path="baymax_agentx_health.db"):
+def store_results_in_sqlite(results, db_path):
+    if not db_path:
+        db_path = os.getenv("DB_PATH")
+
     patient_id = results["patient_id"]
     transcript_text = results["transcript"]
     summary_text = results["physician_summary"]

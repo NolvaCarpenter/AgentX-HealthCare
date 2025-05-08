@@ -190,7 +190,8 @@ def validate_step(state: MedicationProcessState) -> MedicationProcessState:
 
 
 def store_medication(user_id: str, label: MedicationLabel):
-    conn = sqlite3.connect("baymax_agentx_health.db")
+    db_name = os.getenv("DB_PATH")
+    conn = sqlite3.connect(db_name)
     c = conn.cursor()
     c.execute(
         """
