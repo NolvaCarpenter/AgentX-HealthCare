@@ -9,10 +9,16 @@ venv/
 # PyBuilder
 .pybuilder/
 target/
-bk/
-upload/drug_labels
+
 
 __pycache__
+
+# Frontend Files
+node_modules/
+
+# Backend Files
+bk/
+upload/drug_labels
 
 # Jupyter Notebook
 .ipynb_checkpoints

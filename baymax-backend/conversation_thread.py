@@ -6,8 +6,17 @@ import uuid
 import datetime
 from typing import Dict, List, Optional, Any
 
-# Database path
+
+# Database path - making sure this is explicitly set
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Try to use the database file in the current directory if environment variable is not set
 DB_PATH = os.getenv("DB_PATH")
+if not DB_PATH:
+    DB_PATH = os.path.join(BASE_DIR, "baymax_agentx_health.db")
+    print(f"DB_PATH environment variable not set, using: {DB_PATH}")
+else:
+    print(f"Using DB_PATH from environment: {DB_PATH}")
 
 
 def create_conversation_tables():
