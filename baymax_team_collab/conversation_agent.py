@@ -1,6 +1,8 @@
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.memory import MemorySaver
+
 from typing import Dict, List, Any, TypedDict, Optional, Tuple
 import os
 import tempfile
@@ -14,6 +16,9 @@ from symptoms.symptom_extraction import SymptomExtractor, SymptomDetailExtractor
 from medications.medication_state import build_medication_workflow
 from medications.medication_extraction import MedicationProcessState, MedicationLabel
 from medications.handle_upload import validate_medication_image, get_available_samples
+
+
+
 
 from conversation_thread import (
     create_new_thread,
@@ -669,6 +674,8 @@ def generate_question(state: ConversationState) -> ConversationState:
         Your question about the {missing_fields_str} for {symptom}:"""
     )
 
+
+    
     # Format chat history for the prompt
     chat_history_text = "\n".join(
         [
@@ -678,6 +685,8 @@ def generate_question(state: ConversationState) -> ConversationState:
             ]  # Include only the last 5 messages
         ]
     )
+
+    print(f"Chat history: {chat_history_text}")
 
     # Generate the questions
     response = llm.invoke(
@@ -854,30 +863,34 @@ def update_history(state: ConversationState) -> ConversationState:
 
 def save_to_database(state: ConversationState) -> ConversationState:
     """Save conversation, symptoms, and medication data to the database."""
+    print(f"Saving data to database for thread_id: {state['thread_id']}")
     thread_id = state["thread_id"]
-    
+
     # Save user message if it exists
     if state["user_input"]:
         save_message(thread_id, "user", state["user_input"])
-    
+
     # Save assistant's response if it exists
     if state["ai_response"]:
+        
         save_message(thread_id, "assistant", state["ai_response"])
-    
+
     # Save symptom data if there are any symptoms
     if "symptom_state" in state and state["symptom_state"].primary_symptoms:
         # Prepare symptom data for serialization
         symptom_data = state["symptom_state"].model_dump()
+        print(f"Saving symptom data for thread_id: {thread_id}: {symptom_data}")
         save_symptom_data(thread_id, symptom_data)
-    
+
     # Save medication data if there are any medications
     if "extracted_medications" in state and state["extracted_medications"]:
         # Convert medication data to serializable format
         medication_data = {}
         for drug_name, medication in state["extracted_medications"].items():
             medication_data[drug_name] = medication.model_dump()
+        print(f"Saving medication data for thread_id: {thread_id}: {medication_data}")
         save_medication_data(thread_id, medication_data)
-    
+
     return {**state, "current_action": END}
 
 
@@ -948,7 +961,7 @@ def create_conversation_graph() -> StateGraph:
     workflow.set_entry_point("chat")
 
     # Compile the graph
-    return workflow.compile()
+    return workflow.compile(checkpointer=MemorySaver())
 
 
 # Create the conversation agent

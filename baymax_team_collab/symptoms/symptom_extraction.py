@@ -31,7 +31,11 @@ class SymptomExtractor:
 
     def extract_symptoms(self, user_input: str) -> List[str]:
         """Extract symptoms from user input."""
-        response = self.extraction_chain.invoke({"user_input": user_input})
+        # Use the skip_stream tag to prevent tokens from being streamed to the frontend
+        response = self.extraction_chain.invoke(
+            {"user_input": user_input},
+            {"tags": ["skip_stream"]}  # Add skip_stream tag to metadata
+        )
         symptoms_text = response.content.strip()
 
         if symptoms_text.lower() == "none":
@@ -148,7 +152,8 @@ class SymptomDetailExtractor:
                     "symptom_name": symptom_name,
                     "detail_type": detail_type,
                     "user_input": user_input,
-                }
+                },
+                {"tags": ["skip_stream"]}  # Add skip_stream tag
             )
             detail_text = response.content.strip()
             return None if detail_text.lower() == "none" else detail_text
@@ -159,7 +164,8 @@ class SymptomDetailExtractor:
         from datetime import datetime
 
         response = self.severity_extraction_chain.invoke(
-            {"symptom_name": symptom_name, "user_input": user_input}
+            {"symptom_name": symptom_name, "user_input": user_input},
+            {"tags": ["skip_stream"]}  # Add skip_stream tag
         )
 
         try:
@@ -187,7 +193,8 @@ class SymptomDetailExtractor:
                 "symptom_name": symptom_name,
                 "user_input": user_input,
                 "current_date": current_date,
-            }
+            },
+            {"tags": ["skip_stream"]}  # Add skip_stream tag
         )
 
         try:
@@ -218,7 +225,8 @@ class SymptomDetailExtractor:
                 "symptom_name": symptom_name,
                 "detail_type": detail_type,
                 "user_input": user_input,
-            }
+            },
+            {"tags": ["skip_stream"]}  # Add skip_stream tag
         )
 
         try:
