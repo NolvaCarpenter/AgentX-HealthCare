@@ -1,1 +1,24 @@
-node_modules
+# Github's default gitignore for Python
+
+# Environments
+.env
+.venv
+venv/
+.vscode/
+
+# PyBuilder
+.pybuilder/
+target/
+
+
+__pycache__
+
+# Frontend Files
+node_modules/
+
+# Backend Files
+bk/
+upload/drug_labels
+
+# Jupyter Notebook
+.ipynb_checkpoints

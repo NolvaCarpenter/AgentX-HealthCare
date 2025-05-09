@@ -10,9 +10,6 @@ from langgraph.checkpoint.memory import MemorySaver
 from typing import Dict, List, Any, TypedDict, Optional, Tuple, Annotated
 from langchain_core.messages import AIMessage, HumanMessage, AnyMessage
 from langgraph.graph.message import add_messages
-import os
-import tempfile
-import webbrowser
 import uuid
 import datetime
 
@@ -1039,6 +1036,9 @@ def create_conversation_graph() -> StateGraph:
     workflow.add_node("generate_summary", generate_summary)
     workflow.add_node("prepare_medication_upload", prepare_medication_upload)
     workflow.add_node("extract_medication_labels", extract_medication_labels)
+    workflow.add_node(
+        "generate_healthcare_recommendation", generate_healthcare_recommendation
+    )
     workflow.add_node("save_to_database", save_to_database)
 
     # Add edges between nodes
@@ -1072,6 +1072,7 @@ def create_conversation_graph() -> StateGraph:
     workflow.add_edge("generate_question", "save_to_database")
     workflow.add_edge("generate_response", "save_to_database")
     workflow.add_edge("generate_summary", "save_to_database")
+    workflow.add_edge("generate_healthcare_recommendation", "save_to_database")
     workflow.add_edge("extract_medication_labels", "save_to_database")
 
     # Add conditional edges from prepare_medication_upload based on current_action

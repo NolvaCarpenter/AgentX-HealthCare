@@ -3,7 +3,7 @@
 import os
 import sys
 from dotenv import load_dotenv
-from conversation_agent import process_user_input, config
+from conversation_agent import process_user_input
 from conversation_thread import create_new_thread
 from symptoms.voice_symptom_pipeline import (
     process_voice_input,
@@ -38,7 +38,6 @@ def main():
     print(f"Started new conversation thread: {thread_id}\n")
 
     # Initialize the conversation with the new thread
-    config["configurable"]["thread_id"] = thread_id
     response, state = process_user_input("", state, thread_id)
     print(f"\nAssistant: {response}\n")
 
