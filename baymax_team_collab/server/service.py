@@ -119,35 +119,56 @@ async def _process_token_event(event: tuple) -> AsyncGenerator[str, None]:
 
 def get_kwargs_and_run_id(user_input: StreamInput) -> tuple[dict[str, Any], UUID]:
     run_id = uuid4()
+    agent = create_conversation_graph()
     
-    # Only use thread_id from client input, don't generate a new one
-    configurable = {}
-    if user_input.thread_id:
-        configurable["thread_id"] = user_input.thread_id
-
+    # Always have a thread_id
+    thread_id = user_input.thread_id or str(uuid4())
+    configurable = {"thread_id": thread_id}
+    
     config = RunnableConfig(
         configurable=configurable,
         run_id=run_id,
     )
     
+    # Create input with the user message
+    input_message = HumanMessage(content=user_input.message)
     
+    logger.info(f"Checking for existing state for thread: {thread_id}")
+    try:
+        # Try to load the last state from the checkpointer
+        last_state = agent.get_state({"configurable": configurable})
+        
+        if last_state and last_state.values:
+            # Extract some info about the state to log
+            num_messages = len(last_state.values.get("chat_history", [])) if "chat_history" in last_state.values else 0
+            
+            # State found - use it and just add the new user message
+            logger.info(f"✅ FOUND EXISTING STATE for thread {thread_id} with {num_messages} messages")
+            
+            # Just add the new user input
+            input = {
+                "user_input": user_input.message,
+                # Don't replace the entire chat_history, the add_messages reducer 
+                # will properly append the new message
+                "chat_history": [input_message]
+            }
+            return {"input": input, "config": config}, run_id
+        else:
+            logger.warning(f"❌ NO STATE DATA found for thread {thread_id} - state object exists but is empty")
+    except Exception as e:
+        logger.warning(f"❌ NO EXISTING STATE found for thread {thread_id}: {str(e)}")
+    
+    # No existing state found - initialize new state
+    logger.info(f"🆕 Creating NEW conversation state for thread {thread_id}")
     state = initialize_state(configurable=configurable)
-    
-    # Update with the user input
     state["user_input"] = user_input.message
     
-    # Use the initialized state as input
     input = {
-        "messages": [HumanMessage(content=user_input.message)],
+        "chat_history": [input_message],
         **state
     }
-
-    kwargs = {
-        "input": input,
-        "config": config,
-    }
-
-    return kwargs, run_id
+    
+    return {"input": input, "config": config}, run_id
 
 
 async def message_generator(user_input: StreamInput) -> AsyncGenerator[str, None]:

@@ -21,7 +21,6 @@ from medications.handle_upload import validate_medication_image, get_available_s
 
 
 
-
 from conversation_thread import (
     create_new_thread,
     save_message,
@@ -30,6 +29,10 @@ from conversation_thread import (
     get_symptom_data,
     get_medication_data,
 )
+
+memory_saver = MemorySaver()
+
+
 
 
 # Define the state schema for the conversation graph
@@ -952,7 +955,7 @@ def create_conversation_graph() -> StateGraph:
     workflow.set_entry_point("chat")
 
     # Compile the graph
-    return workflow.compile(checkpointer=MemorySaver())
+    return workflow.compile(checkpointer=memory_saver)
 
 
 # Create the conversation agent
