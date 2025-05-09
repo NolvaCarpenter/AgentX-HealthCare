@@ -45,21 +45,12 @@ class SymptomExtractor:
         self.extraction_chain = self.extract_symptoms_prompt | self.llm
 
     def extract_symptoms(self, user_input: str) -> List[str]:
-        """
-        Extract symptoms from user input with enhanced synonym and misspelling handling.
-
-        Args:
-            user_input: The user's natural language input describing symptoms
-
-        Returns:
-            List of standardized symptom terms
-        """
-        # Log the extraction attempt
-        logger.info(
-            f"Extracting symptoms from input: '{user_input[:50]}...' (truncated)"
+        """Extract symptoms from user input."""
+        # Use the skip_stream tag to prevent tokens from being streamed to the frontend
+        response = self.extraction_chain.invoke(
+            {"user_input": user_input},
+            {"tags": ["skip_stream"]},  # Add skip_stream tag to metadata
         )
-
-        response = self.extraction_chain.invoke({"user_input": user_input})
         symptoms_text = response.content.strip()
 
         if "none" in symptoms_text.lower():
@@ -258,7 +249,8 @@ class SymptomDetailExtractor:
                     "symptom_name": symptom_name,
                     "detail_type": detail_type,
                     "user_input": user_input,
-                }
+                },
+                {"tags": ["skip_stream"]},  # Add skip_stream tag
             )
             detail_text = response.content.strip()
             result = None if detail_text.lower() == "none" else detail_text
@@ -271,7 +263,8 @@ class SymptomDetailExtractor:
         from datetime import datetime
 
         response = self.severity_extraction_chain.invoke(
-            {"symptom_name": symptom_name, "user_input": user_input}
+            {"symptom_name": symptom_name, "user_input": user_input},
+            {"tags": ["skip_stream"]},  # Add skip_stream tag
         )
 
         try:
@@ -302,7 +295,8 @@ class SymptomDetailExtractor:
                 "symptom_name": symptom_name,
                 "user_input": user_input,
                 "current_date": current_date,
-            }
+            },
+            {"tags": ["skip_stream"]},  # Add skip_stream tag
         )
 
         try:
@@ -336,7 +330,8 @@ class SymptomDetailExtractor:
                 "symptom_name": symptom_name,
                 "detail_type": detail_type,
                 "user_input": user_input,
-            }
+            },
+            {"tags": ["skip_stream"]},  # Add skip_stream tag
         )
 
         try:
