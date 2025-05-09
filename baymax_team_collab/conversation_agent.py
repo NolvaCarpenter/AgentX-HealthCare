@@ -849,7 +849,36 @@ def update_history(state: ConversationState) -> ConversationState:
     chat_history.append({"role": "assistant", "content": state["ai_response"]})
 
     # Update state
-    return {**state, "chat_history": chat_history, "current_action": END}
+    return {**state, "chat_history": chat_history, "current_action": "save_to_database"}
+
+
+def save_to_database(state: ConversationState) -> ConversationState:
+    """Save conversation, symptoms, and medication data to the database."""
+    thread_id = state["thread_id"]
+    
+    # Save user message if it exists
+    if state["user_input"]:
+        save_message(thread_id, "user", state["user_input"])
+    
+    # Save assistant's response if it exists
+    if state["ai_response"]:
+        save_message(thread_id, "assistant", state["ai_response"])
+    
+    # Save symptom data if there are any symptoms
+    if "symptom_state" in state and state["symptom_state"].primary_symptoms:
+        # Prepare symptom data for serialization
+        symptom_data = state["symptom_state"].model_dump()
+        save_symptom_data(thread_id, symptom_data)
+    
+    # Save medication data if there are any medications
+    if "extracted_medications" in state and state["extracted_medications"]:
+        # Convert medication data to serializable format
+        medication_data = {}
+        for drug_name, medication in state["extracted_medications"].items():
+            medication_data[drug_name] = medication.model_dump()
+        save_medication_data(thread_id, medication_data)
+    
+    return {**state, "current_action": END}
 
 
 # Create the conversation graph
@@ -870,6 +899,7 @@ def create_conversation_graph() -> StateGraph:
     workflow.add_node("prepare_medication_upload", prepare_medication_upload)
     workflow.add_node("extract_medication_labels", extract_medication_labels)
     workflow.add_node("update_history", update_history)
+    workflow.add_node("save_to_database", save_to_database)
     # Add edges between nodes
     workflow.add_conditional_edges(
         "chat",
@@ -910,6 +940,9 @@ def create_conversation_graph() -> StateGraph:
             "generate_response": "generate_response",
         },
     )
+
+    # Update_history leads to save_to_database
+    workflow.add_edge("update_history", "save_to_database")
 
     # Set entry point
     workflow.set_entry_point("chat")
@@ -1010,18 +1043,11 @@ def process_user_input(
         graph_config = {"configurable": graph_configurable}
         state = conversation_graph.invoke(state, graph_config)
 
-        if state["ai_response"]:
-            save_message(thread_id, "assistant", state["ai_response"])
-
         return state["ai_response"], state
 
     # Use the thread_id from the state if not explicitly provided
     if thread_id is None and "thread_id" in state:
         thread_id = state["thread_id"]
-
-    # Save user message to the thread
-    if thread_id:
-        save_message(thread_id, "user", user_input)
 
     # Update state with user input
     state = {
@@ -1038,32 +1064,6 @@ def process_user_input(
     }
     graph_config = {"configurable": graph_configurable}
     state = conversation_graph.invoke(state, graph_config)
-
-    # Save assistant's response to the thread
-    if thread_id and state["ai_response"]:
-        save_message(thread_id, "assistant", state["ai_response"])
-
-    # Save symptom data if there are any symptoms
-    if (
-        thread_id
-        and "symptom_state" in state
-        and state["symptom_state"].primary_symptoms
-    ):
-        # Prepare symptom data for serialization
-        symptom_data = state["symptom_state"].model_dump()
-        save_symptom_data(thread_id, symptom_data)
-
-    # Save medication data if there are any medications
-    if (
-        thread_id
-        and "extracted_medications" in state
-        and state["extracted_medications"]
-    ):
-        # Convert medication data to serializable format
-        medication_data = {}
-        for drug_name, medication in state["extracted_medications"].items():
-            medication_data[drug_name] = medication.model_dump()
-        save_medication_data(thread_id, medication_data)
 
     # Return the AI response and updated state
     return state["ai_response"], state
