@@ -3,7 +3,9 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
-from typing import Dict, List, Any, TypedDict, Optional, Tuple
+from typing import Dict, List, Any, TypedDict, Optional, Tuple, Annotated
+from langchain_core.messages import AIMessage, HumanMessage, AnyMessage
+from langgraph.graph.message import add_messages
 import os
 import tempfile
 import webbrowser
@@ -37,7 +39,7 @@ class ConversationState(TypedDict):
     user_input: str
     ai_response: str
     current_action: str
-    chat_history: List[Dict[str, str]]
+    chat_history: Annotated[List[AnyMessage], add_messages]
     symptom_state: SymptomState
     extracted_symptoms: Dict[str, SymptomDetail]
     missing_fields: List[str]
@@ -197,19 +199,23 @@ def prepare_medication_upload(state: ConversationState) -> ConversationState:
 
         if valid_filename:
             print(f"Processing file: {valid_filename}")
+            response = f"I've successfully processed your medication label from the file: {valid_filename}. Any other things you want to share with me?"
             # Return updated state with the filename and next action
             return {
                 **state,
                 "filename": valid_filename,
-                "ai_response": f"I've successfully processed your medication label from the file: {valid_filename}. Any other things you want to share with me?",
+                "ai_response": response,
+                "chat_history": [AIMessage(content=response)],
                 "current_action": "extract_medication_labels",
             }
         else:
             print("Could not process medication label. Please try again.")
+            response = "I couldn't process the medication label. Please try again with a valid image file."
             return {
                 **state,
-                "ai_response": "I couldn't process the medication label. Please try again with a valid image file.",
-                "current_action": "generate_response",
+                "ai_response": response,
+                "chat_history": [AIMessage(content=response)],
+                "current_action": "save_to_database",
             }
 
 
@@ -285,23 +291,28 @@ def extract_medication_labels(state: ConversationState) -> ConversationState:
                 "medication_state": processed_state,
                 "extracted_medications": extracted_medications,
                 "ai_response": ai_response,
-                "current_action": "update_history",
+                "chat_history": [AIMessage(content=ai_response)],
+                "current_action": "save_to_database",
             }
         else:
             # If no medication was extracted or the OCR failed
+            response = "I couldn't identify medication information from the uploaded image. Please make sure the image is clear and contains readable medication label information."
             return {
                 **state,
                 "medication_state": processed_state,
-                "ai_response": "I couldn't identify medication information from the uploaded image. Please make sure the image is clear and contains readable medication label information.",
-                "current_action": "update_history",
+                "ai_response": response,
+                "chat_history": [AIMessage(content=response)],
+                "current_action": "save_to_database",
             }
 
     except Exception as e:
         print(f"Error processing medication image: {str(e)}")
+        response = f"I encountered an error while processing the medication label: {str(e)}. Please try uploading a clearer image."
         return {
             **state,
-            "ai_response": f"I encountered an error while processing the medication label: {str(e)}. Please try uploading a clearer image.",
-            "current_action": "update_history",
+            "ai_response": response,
+            "chat_history": [AIMessage(content=response)],
+            "current_action": "save_to_database",
         }
 
 
@@ -674,16 +685,10 @@ def generate_question(state: ConversationState) -> ConversationState:
         Your question about the {missing_fields_str} for {symptom}:"""
     )
 
-
-    
     # Format chat history for the prompt
+    chat_messages = state["chat_history"][-MAX_CHAT_HISTORY_LENGTH:]  # Include only the last N messages
     chat_history_text = "\n".join(
-        [
-            f"{msg['role'].capitalize()}: {msg['content']}"
-            for msg in state["chat_history"][
-                -MAX_CHAT_HISTORY_LENGTH:
-            ]  # Include only the last 5 messages
-        ]
+        [f"{msg.__class__.__name__.replace('Message', '')}: {msg.content}" for msg in chat_messages]
     )
 
     print(f"Chat history: {chat_history_text}")
@@ -701,14 +706,15 @@ def generate_question(state: ConversationState) -> ConversationState:
     return {
         **state,
         "ai_response": response.content,
-        "current_action": "update_history",
+        "chat_history": [AIMessage(content=response.content)],
+        "current_action": "save_to_database",
     }
 
 
 def generate_response(state: ConversationState) -> ConversationState:
     """Generate a general response."""
     if not state["user_input"]:
-        return {**state, "current_action": "update_history"}
+        return {**state, "current_action": "save_to_database"}
 
     # Get relevant state components
     extracted_symptoms = state.get("extracted_symptoms", {})
@@ -744,7 +750,9 @@ def generate_response(state: ConversationState) -> ConversationState:
     # Format symptoms and chat history for the prompt
     symptoms_text = (
         ", ".join(extracted_symptoms.keys()) if extracted_symptoms else "None"
-    )  # Format medication information for the prompt
+    )
+    
+    # Format medication information for the prompt
     medication_details = []
     if extracted_medications:
         for drug_name, medication in extracted_medications.items():
@@ -759,13 +767,10 @@ def generate_response(state: ConversationState) -> ConversationState:
     else:
         medication_text = "None"
 
+    # Format chat history for the prompt
+    chat_messages = state["chat_history"][-MAX_CHAT_HISTORY_LENGTH:]  # Include only the last N messages
     chat_history_text = "\n".join(
-        [
-            f"{msg['role'].capitalize()}: {msg['content']}"
-            for msg in state["chat_history"][
-                -MAX_CHAT_HISTORY_LENGTH:
-            ]  # Include only the last 5 messages
-        ]
+        [f"{msg.__class__.__name__.replace('Message', '')}: {msg.content}" for msg in chat_messages]
     )
 
     # Generate the response
@@ -782,7 +787,8 @@ def generate_response(state: ConversationState) -> ConversationState:
     return {
         **state,
         "ai_response": response.content,
-        "current_action": "update_history",
+        "chat_history": [AIMessage(content=response.content)],
+        "current_action": "save_to_database",
     }
 
 
@@ -802,11 +808,14 @@ def generate_summary(state: ConversationState) -> ConversationState:
     else:
         summary.append("\n" + medication_state.get_session_summary())
 
+    response = "\n".join(summary)
+    
     # Update state
     return {
         **state,
-        "ai_response": "\n".join(summary),
-        "current_action": "update_history",
+        "ai_response": response,
+        "chat_history": [AIMessage(content=response)],
+        "current_action": "save_to_database",
     }
 
 
@@ -814,11 +823,11 @@ def chat(state: ConversationState) -> ConversationState:
     """Generate a greeting message."""
     # If there's user input, we should check for symptoms
     if state["user_input"]:
+        # Add the user input to chat history
         return {
             **state,
-            "current_action": check_symptom_context(
-                state
-            ),  # Use the function to determine the next action
+            "chat_history": [HumanMessage(content=state["user_input"])],
+            "current_action": check_symptom_context(state),
         }
 
     # For initial greeting (no user input)
@@ -842,23 +851,9 @@ def chat(state: ConversationState) -> ConversationState:
     return {
         **state,
         "ai_response": response.content,
-        "current_action": "generate_response",
+        "chat_history": [AIMessage(content=response.content)],
+        "current_action": "save_to_database",
     }
-
-
-def update_history(state: ConversationState) -> ConversationState:
-    """Update the chat history with the latest user input and AI response."""
-    chat_history = state["chat_history"].copy()
-
-    # Add user message if it exists
-    if state["user_input"]:
-        chat_history.append({"role": "user", "content": state["user_input"]})
-
-    # Add AI response
-    chat_history.append({"role": "assistant", "content": state["ai_response"]})
-
-    # Update state
-    return {**state, "chat_history": chat_history, "current_action": "save_to_database"}
 
 
 def save_to_database(state: ConversationState) -> ConversationState:
@@ -872,7 +867,6 @@ def save_to_database(state: ConversationState) -> ConversationState:
 
     # Save assistant's response if it exists
     if state["ai_response"]:
-        
         save_message(thread_id, "assistant", state["ai_response"])
 
     # Save symptom data if there are any symptoms
@@ -911,8 +905,8 @@ def create_conversation_graph() -> StateGraph:
     workflow.add_node("generate_summary", generate_summary)
     workflow.add_node("prepare_medication_upload", prepare_medication_upload)
     workflow.add_node("extract_medication_labels", extract_medication_labels)
-    workflow.add_node("update_history", update_history)
     workflow.add_node("save_to_database", save_to_database)
+    
     # Add edges between nodes
     workflow.add_conditional_edges(
         "chat",
@@ -938,11 +932,11 @@ def create_conversation_graph() -> StateGraph:
         },
     )
 
-    # All responses lead to update_history
-    workflow.add_edge("generate_question", "update_history")
-    workflow.add_edge("generate_response", "update_history")
-    workflow.add_edge("generate_summary", "update_history")
-    workflow.add_edge("extract_medication_labels", "update_history")
+    # All responses now go directly to save_to_database
+    workflow.add_edge("generate_question", "save_to_database")
+    workflow.add_edge("generate_response", "save_to_database")
+    workflow.add_edge("generate_summary", "save_to_database")
+    workflow.add_edge("extract_medication_labels", "save_to_database")
 
     # Add conditional edges from prepare_medication_upload based on current_action
     workflow.add_conditional_edges(
@@ -950,12 +944,9 @@ def create_conversation_graph() -> StateGraph:
         lambda x: x["current_action"],
         {
             "extract_medication_labels": "extract_medication_labels",
-            "generate_response": "generate_response",
+            "save_to_database": "save_to_database",
         },
     )
-
-    # Update_history leads to save_to_database
-    workflow.add_edge("update_history", "save_to_database")
 
     # Set entry point
     workflow.set_entry_point("chat")
