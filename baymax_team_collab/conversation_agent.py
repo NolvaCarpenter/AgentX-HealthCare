@@ -694,7 +694,7 @@ def generate_question(state: ConversationState) -> ConversationState:
         [f"{msg.__class__.__name__.replace('Message', '')}: {msg.content}" for msg in chat_messages]
     )
 
-    print(f"Chat history: {chat_history_text}")
+    
 
     # Generate the questions
     response = llm.invoke(
@@ -861,7 +861,7 @@ def chat(state: ConversationState) -> ConversationState:
 
 def save_to_database(state: ConversationState) -> ConversationState:
     """Save conversation, symptoms, and medication data to the database."""
-    print(f"Saving data to database for thread_id: {state['thread_id']}")
+    
     thread_id = state["thread_id"]
 
     # Save user message if it exists
@@ -876,7 +876,6 @@ def save_to_database(state: ConversationState) -> ConversationState:
     if "symptom_state" in state and state["symptom_state"].primary_symptoms:
         # Prepare symptom data for serialization
         symptom_data = state["symptom_state"].model_dump()
-        print(f"Saving symptom data for thread_id: {thread_id}: {symptom_data}")
         save_symptom_data(thread_id, symptom_data)
 
     # Save medication data if there are any medications
@@ -919,6 +918,7 @@ def create_conversation_graph() -> StateGraph:
             "generate_response": "generate_response",
             "generate_summary": "generate_summary",
             "prepare_medication_upload": "prepare_medication_upload",
+            "save_to_database": "save_to_database",
         },
     )
     workflow.add_edge("extract_symptoms", "process_symptoms")

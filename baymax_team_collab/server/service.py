@@ -23,8 +23,10 @@ from baymax_team_collab.server.util import (
     langchain_to_chat_message,
 )
 
-logger = logging.getLogger(__name__)
 
+
+# Create a singleton conversation graph that will be reused across requests
+CONVERSATION_GRAPH = create_conversation_graph()
 
 def verify_bearer(
     http_auth: Annotated[
@@ -89,11 +91,11 @@ async def _process_updates_event(
 
             # Log tool calls for debugging
             if hasattr(message, "tool_calls") and message.tool_calls:
-                logger.info(f"Tool calls: {message.tool_calls}")
+                print(f"Tool calls: {message.tool_calls}")
 
             yield _format_sse_message("message", chat_message.model_dump())
         except Exception as e:
-            logger.error(f"Error parsing message: {e}")
+            print(f"Error parsing message: {e}")
             yield _format_sse_message("error", "Unexpected error")
 
 
@@ -119,7 +121,6 @@ async def _process_token_event(event: tuple) -> AsyncGenerator[str, None]:
 
 def get_kwargs_and_run_id(user_input: StreamInput) -> tuple[dict[str, Any], UUID]:
     run_id = uuid4()
-    agent = create_conversation_graph()
     
     # Always have a thread_id
     thread_id = user_input.thread_id or str(uuid4())
@@ -133,33 +134,35 @@ def get_kwargs_and_run_id(user_input: StreamInput) -> tuple[dict[str, Any], UUID
     # Create input with the user message
     input_message = HumanMessage(content=user_input.message)
     
-    logger.info(f"Checking for existing state for thread: {thread_id}")
+    print(f"Checking for existing state for thread: {thread_id}")
     try:
         # Try to load the last state from the checkpointer
-        last_state = agent.get_state({"configurable": configurable})
+        last_state = CONVERSATION_GRAPH.get_state({"configurable": configurable})
         
         if last_state and last_state.values:
             # Extract some info about the state to log
             num_messages = len(last_state.values.get("chat_history", [])) if "chat_history" in last_state.values else 0
             
             # State found - use it and just add the new user message
-            logger.info(f"✅ FOUND EXISTING STATE for thread {thread_id} with {num_messages} messages")
-            
+            print(f"✅ FOUND EXISTING STATE for thread {thread_id} with {num_messages} messages")
+
+            print("-"*30)
+            print("last_state.values = ",last_state.values)
+            print("-" * 30)
+
             # Just add the new user input
             input = {
                 "user_input": user_input.message,
-                # Don't replace the entire chat_history, the add_messages reducer 
-                # will properly append the new message
                 "chat_history": [input_message]
             }
             return {"input": input, "config": config}, run_id
         else:
-            logger.warning(f"❌ NO STATE DATA found for thread {thread_id} - state object exists but is empty")
+            print(f"❌ NO STATE DATA found for thread {thread_id} - state object exists but is empty")
     except Exception as e:
-        logger.warning(f"❌ NO EXISTING STATE found for thread {thread_id}: {str(e)}")
+        print(f"❌ NO EXISTING STATE found for thread {thread_id}: {str(e)}")
     
     # No existing state found - initialize new state
-    logger.info(f"🆕 Creating NEW conversation state for thread {thread_id}")
+    print(f"🆕 Creating NEW conversation state for thread {thread_id}")
     state = initialize_state(configurable=configurable)
     state["user_input"] = user_input.message
     
@@ -177,40 +180,38 @@ async def message_generator(user_input: StreamInput) -> AsyncGenerator[str, None
 
     This is the workhorse method for the /stream endpoint.
     """
-    agent: Pregel = create_conversation_graph()
+    agent: Pregel = CONVERSATION_GRAPH
     kwargs, run_id = get_kwargs_and_run_id(user_input)
 
     try:
-        logger.info(f"Starting stream with run_id: {run_id}")
-        logger.info(f"Using thread_id from client: {user_input.thread_id}")
-        
+        print(f"Starting stream with run_id: {run_id}")
+        print(f"Using thread_id from client: {user_input.thread_id}")
+
         async for stream_event in agent.astream(
             **kwargs, stream_mode=["updates", "messages"]
         ):
             if not isinstance(stream_event, tuple):
-                logger.warning(f"Unexpected stream_event type: {type(stream_event)}")
+                print(f"Unexpected stream_event type: {type(stream_event)}")
                 continue
 
             stream_mode, event = stream_event
-            logger.info(f"Received stream_mode: {stream_mode}, event type: {type(event)}")
+            
 
             # Process different event types
             if stream_mode == "updates":
-                logger.info(f"Processing updates event: {event}")
                 async for msg in _process_updates_event(event, user_input, run_id):
                     yield msg
 
             elif stream_mode == "messages" and user_input.stream_tokens:
                 # Handle token streaming
-                logger.info(f"Processing messages event: {event}")
                 async for msg in _process_token_event(event):
                     yield msg
 
             else:
-                logger.warning(f"Unhandled stream mode: {stream_mode}")
+                print(f"Unhandled stream mode: {stream_mode}")
 
     except Exception as e:
-        logger.error(f"Error in message generator: {e}", exc_info=True)
+        print(f"Error in message generator: {e}", exc_info=True)
         yield _format_sse_message("error", "Internal server error")
     finally:
         yield "data: [DONE]\n\n"
@@ -228,6 +229,12 @@ def _sse_response_example() -> dict[int | str, Any]:
             },
         }
     }
+
+
+
+
+
+
 
 
 @router.post(
