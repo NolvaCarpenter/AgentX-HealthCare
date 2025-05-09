@@ -65,6 +65,7 @@ dependencies = [
     "langsmith",
     "ipython",
     "pytesseract",
+    "fastapi (>=0.115.12,<0.116.0)",
 ]
 
 
@@ -78,4 +79,5 @@ package-mode = false
 [tool.poetry.group.dev.dependencies]
 gradio = "^5.29.0"
 pygraphviz = "^1.14"
+graphviz = "^0.20.3"
 
