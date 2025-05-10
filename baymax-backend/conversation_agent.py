@@ -4,6 +4,8 @@ import datetime
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.store.memory import InMemoryStore
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -648,9 +650,7 @@ def generate_question(state: ConversationState) -> ConversationState:
     for field in missing_fields[:MAX_MISSING_FIELDS_TO_ASK]:
         field_questions = get_follow_up_questions(current_symptom, field)
         if field_questions:
-            suggested_questions.append(
-                field_questions[0]
-            )  # Take the first question for each field
+            suggested_questions.append(field_questions[0])
 
     # Format suggested questions as string examples
     suggested_questions_str = "\n".join([f"- {q}" for q in suggested_questions])
@@ -660,13 +660,11 @@ def generate_question(state: ConversationState) -> ConversationState:
 
     # Check previously asked questions to avoid repetition
     previous_questions = []
-    for message in state["chat_history"][-10:]:  # Look at last 10 messages
-        if message["role"] == "assistant" and "?" in message["content"]:
-            previous_questions.append(message["content"])
+    for message in state["chat_history"][-10:]:
+        if isinstance(message, AIMessage) and "?" in message.content:
+            previous_questions.append(message.content)
 
-    previous_questions_str = "\n".join(
-        [f"- {q}" for q in previous_questions[-3:]]
-    )  # Last 3 questions
+    previous_questions_str = "\n".join([f"- {q}" for q in previous_questions[-3:]])
 
     # Define the question prompt with medical knowledge integration
     question_prompt = ChatPromptTemplate.from_template(
@@ -1088,8 +1086,10 @@ def create_conversation_graph() -> StateGraph:
     # Set entry point
     workflow.set_entry_point("chat")
 
-    # Compile the graph
-    return workflow.compile(checkpointer=memory_saver)
+    # Initialize the checkpointer for state history tracking
+    checkpointer = InMemorySaver()
+    # Compile the graph with the checkpointer
+    return workflow.compile(checkpointer=checkpointer)
 
 
 # Create the conversation agent
