@@ -34,6 +34,20 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="healthTracker"
+        options={{
+          title: 'healthTracker',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="clipboard.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="health_summary"
+        options={{
+          title: 'summary',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="chart.bar.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="explore"
         options={{
           title: 'Explore',
