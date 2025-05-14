@@ -4,7 +4,7 @@
 // 약물 타입 정의 (변경된 구조 반영)
 export interface Medication {
   user_id: string;
-  recorded_datetime: string;
+  label_uploaded_datetime: string;
   pharmacy_name: string;
   pharmacy_address: string;
   pharmacy_phone: string;
@@ -47,6 +47,16 @@ export interface SymptomDetail {
   relieving_factors: string[];
   associated_symptoms: string[];
 }
+
+// export interface Symptom {
+//   user_id: string;
+//   recorded_datetime: string;
+//   audio_file: string;
+//   primary_symptoms: string[];
+//   secondary_symptoms: string[];
+//   symptom_details: Record<string, any>;
+//   alert_flag: boolean;
+// }
 
 // 증상 타입 정의 (변경된 구조 반영)
 export interface Symptom {
